@@ -5,7 +5,7 @@
 import logging
 
 from aiohttp import web
-from socketio import AsyncServer
+from socketio import AsyncServer, AsyncRedisManager
 
 from servicelib.application_keys import APP_CONFIG_KEY
 from servicelib.application_setup import ModuleCategory, app_module_setup
@@ -19,13 +19,15 @@ log = logging.getLogger(__name__)
 def monkey_patch_engineio():
     # pylint: disable=too-many-statements
     """Adrsses an issue where cookies containing '=' signs in the value fail to be parsed"""
-    REQUIRED_ENGINEIO_VERSION = '3.12.1'
+    REQUIRED_ENGINEIO_VERSION = "3.12.1"
     from engineio.__init__ import __version__
 
     if __version__ != REQUIRED_ENGINEIO_VERSION:
-        raise RuntimeError(f"The engineio version required for this monkey patch is {REQUIRED_ENGINEIO_VERSION}\n"
-                            "Please check if the new release includes the following"
-                            "PR [#175](https://github.com/miguelgrinberg/python-engineio/pull/175)")
+        raise RuntimeError(
+            f"The engineio version required for this monkey patch is {REQUIRED_ENGINEIO_VERSION}\n"
+            "Please check if the new release includes the following"
+            "PR [#175](https://github.com/miguelgrinberg/python-engineio/pull/175)"
+        )
 
     from engineio.asyncio_client import AsyncClient
 
@@ -44,20 +46,17 @@ def monkey_patch_engineio():
         # pylint: disable=protected-access,no-else-return,broad-except,too-many-return-statements,too-many-branches
         """Establish or upgrade to a WebSocket connection with the server."""
         if aiohttp is None:  # pragma: no cover
-            self.logger.error('aiohttp package not installed')
+            self.logger.error("aiohttp package not installed")
             return False
-        websocket_url = self._get_engineio_url(url, engineio_path,
-                                               'websocket')
+        websocket_url = self._get_engineio_url(url, engineio_path, "websocket")
         if self.sid:
-            self.logger.info(
-                'Attempting WebSocket upgrade to ' + websocket_url)
+            self.logger.info("Attempting WebSocket upgrade to " + websocket_url)
             upgrade = True
-            websocket_url += '&sid=' + self.sid
+            websocket_url += "&sid=" + self.sid
         else:
             upgrade = False
             self.base_url = websocket_url
-            self.logger.info(
-                'Attempting WebSocket connection to ' + websocket_url)
+            self.logger.info("Attempting WebSocket connection to " + websocket_url)
 
         if self.http is None or self.http.closed:  # pragma: no cover
             self.http = aiohttp.ClientSession()
@@ -66,9 +65,8 @@ def monkey_patch_engineio():
         # sent the the WebSocket route
         cookies = {}
         for header, value in headers.items():
-            if header.lower() == 'cookie':
-                cookies = dict(
-                    [cookie.split('=', 1) for cookie in value.split('; ')])
+            if header.lower() == "cookie":
+                cookies = dict([cookie.split("=", 1) for cookie in value.split("; ")])
                 del headers[header]
                 break
         self.http.cookie_jar.update_cookies(cookies)
@@ -80,89 +78,124 @@ def monkey_patch_engineio():
                 ssl_context.verify_mode = ssl.CERT_NONE
                 ws = await self.http.ws_connect(
                     websocket_url + self._get_url_timestamp(),
-                    headers=headers, ssl=ssl_context)
+                    headers=headers,
+                    ssl=ssl_context,
+                )
             else:
                 ws = await self.http.ws_connect(
-                    websocket_url + self._get_url_timestamp(),
-                    headers=headers)
-        except (aiohttp.client_exceptions.WSServerHandshakeError,
-                aiohttp.client_exceptions.ServerConnectionError):
+                    websocket_url + self._get_url_timestamp(), headers=headers
+                )
+        except (
+            aiohttp.client_exceptions.WSServerHandshakeError,
+            aiohttp.client_exceptions.ServerConnectionError,
+        ):
             if upgrade:
-                self.logger.warning(
-                    'WebSocket upgrade failed: connection error')
+                self.logger.warning("WebSocket upgrade failed: connection error")
                 return False
             else:
-                raise exceptions.ConnectionError('Connection error')
+                raise exceptions.ConnectionError("Connection error")
         if upgrade:
-            p = packet.Packet(packet.PING, data='probe').encode(
-                always_bytes=False)
+            p = packet.Packet(packet.PING, data="probe").encode(always_bytes=False)
             try:
                 await ws.send_str(p)
             except Exception as e:  # pragma: no cover
                 self.logger.warning(
-                    'WebSocket upgrade failed: unexpected send exception: %s',
-                    str(e))
+                    "WebSocket upgrade failed: unexpected send exception: %s", str(e)
+                )
                 return False
             try:
                 p = (await ws.receive()).data
             except Exception as e:  # pragma: no cover
                 self.logger.warning(
-                    'WebSocket upgrade failed: unexpected recv exception: %s',
-                    str(e))
+                    "WebSocket upgrade failed: unexpected recv exception: %s", str(e)
+                )
                 return False
             pkt = packet.Packet(encoded_packet=p)
-            if pkt.packet_type != packet.PONG or pkt.data != 'probe':
-                self.logger.warning(
-                    'WebSocket upgrade failed: no PONG packet')
+            if pkt.packet_type != packet.PONG or pkt.data != "probe":
+                self.logger.warning("WebSocket upgrade failed: no PONG packet")
                 return False
             p = packet.Packet(packet.UPGRADE).encode(always_bytes=False)
             try:
                 await ws.send_str(p)
             except Exception as e:  # pragma: no cover
                 self.logger.warning(
-                    'WebSocket upgrade failed: unexpected send exception: %s',
-                    str(e))
+                    "WebSocket upgrade failed: unexpected send exception: %s", str(e)
+                )
                 return False
-            self.current_transport = 'websocket'
-            self.logger.info('WebSocket upgrade was successful')
+            self.current_transport = "websocket"
+            self.logger.info("WebSocket upgrade was successful")
         else:
             try:
                 p = (await ws.receive()).data
             except Exception as e:  # pragma: no cover
-                raise exceptions.ConnectionError(
-                    'Unexpected recv exception: ' + str(e))
+                raise exceptions.ConnectionError("Unexpected recv exception: " + str(e))
             open_packet = packet.Packet(encoded_packet=p)
             if open_packet.packet_type != packet.OPEN:
-                raise exceptions.ConnectionError('no OPEN packet')
+                raise exceptions.ConnectionError("no OPEN packet")
             self.logger.info(
-                'WebSocket connection accepted with ' + str(open_packet.data))
-            self.sid = open_packet.data['sid']
-            self.upgrades = open_packet.data['upgrades']
-            self.ping_interval = open_packet.data['pingInterval'] / 1000.0
-            self.ping_timeout = open_packet.data['pingTimeout'] / 1000.0
-            self.current_transport = 'websocket'
+                "WebSocket connection accepted with " + str(open_packet.data)
+            )
+            self.sid = open_packet.data["sid"]
+            self.upgrades = open_packet.data["upgrades"]
+            self.ping_interval = open_packet.data["pingInterval"] / 1000.0
+            self.ping_timeout = open_packet.data["pingTimeout"] / 1000.0
+            self.current_transport = "websocket"
 
-            self.state = 'connected'
+            self.state = "connected"
             client.connected_clients.append(self)
-            await self._trigger_event('connect', run_async=False)
+            await self._trigger_event("connect", run_async=False)
 
         self.ws = ws
         self.ping_loop_task = self.start_background_task(self._ping_loop)
         self.write_loop_task = self.start_background_task(self._write_loop)
-        self.read_loop_task = self.start_background_task(
-            self._read_loop_websocket)
+        self.read_loop_task = self.start_background_task(self._read_loop_websocket)
         return True
-    
-    AsyncClient._connect_websocket = _connect_websocket # pylint: disable=protected-access
+
+    # pylint: disable=protected-access
+    AsyncClient._connect_websocket = _connect_websocket
+
+
+def monkey_patch_socketio():
+    # pylint: disable=too-many-statements
+    """A coroutine was not awaited for in the python-socketio source"""
+    REQUIRED_SOCKETIO_VERSION = "4.5.1"
+    from socketio.__init__ import __version__
+
+    if __version__ != REQUIRED_SOCKETIO_VERSION:
+        raise RuntimeError(
+            f"The python-socketio version required for this monkey patch is {REQUIRED_SOCKETIO_VERSION}\n"
+            "Please check if the new release includes the following"
+            "PR [#488](https://github.com/miguelgrinberg/python-socketio/pull/488)"
+        )
+
+    from socketio.asyncio_pubsub_manager import AsyncPubSubManager
+
+    async def can_disconnect(self, sid, namespace):
+        ## pylint: disable=no-else-return,protected-access
+        if self.is_connected(sid, namespace):
+            # client is in this server, so we can disconnect directly
+            return await super(AsyncPubSubManager, self).can_disconnect(sid, namespace)
+        else:
+            # client is in another server, so we post request to the queue
+            await self._publish(
+                {"method": "disconnect", "sid": sid, "namespace": namespace or "/"}
+            )
+
+    AsyncPubSubManager.can_disconnect = can_disconnect
 
 
 monkey_patch_engineio()
+monkey_patch_socketio()
 
 
 @app_module_setup(__name__, ModuleCategory.SYSTEM, logger=log)
 def setup(app: web.Application):
-    mgr = None
-    sio = AsyncServer(async_mode="aiohttp", client_manager=mgr, logging=log)
+    cfg = app[APP_CONFIG_KEY][CONFIG_SECTION_NAME]
+    redis_url = f"redis://{cfg['redis']['host']}:{cfg['redis']['port']}"
+    async_redis_manager = AsyncRedisManager(redis_url)
+    sio = AsyncServer(
+        async_mode="aiohttp", client_manager=async_redis_manager, logging=log
+    )
     sio.attach(app)
     app[APP_CLIENT_SOCKET_SERVER_KEY] = sio
     handlers_utils.register_handlers(app, handlers)

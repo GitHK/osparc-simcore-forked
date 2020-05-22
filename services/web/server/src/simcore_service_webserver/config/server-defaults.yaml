@@ -21,6 +21,9 @@ reverse_proxy:
   enabled: False
 socketio:
   enabled: True
+  redis:
+    host: redis
+    port: 6379
 db:
   init_tables: False
   postgres:

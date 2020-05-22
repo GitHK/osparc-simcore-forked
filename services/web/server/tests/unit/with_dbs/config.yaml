@@ -12,6 +12,9 @@ director:
   port: 8001
 socketio:
   enabled: True
+  redis:
+    host: localhost
+    port: 6379
 application_proxy:
   enabled: False
 db:

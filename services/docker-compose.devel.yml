@@ -33,6 +33,8 @@ services:
       - SC_BOOT_MODE=debug-ptvsd
       - WEBSERVER_RESOURCES_DELETION_TIMEOUT_SECONDS=15
       - WEBSERVER_LOGLEVEL=${LOG_LEVEL:-DEBUG}
+    deploy:
+      replicas: 10
 
   sidecar:
     volumes:

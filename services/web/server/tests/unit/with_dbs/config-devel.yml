@@ -77,12 +77,9 @@ smtp:
   username: null
 socketio:
   enabled: false
-  message_queue:
-    channel: socketio
-    host: rabbit
-    password: simcore
-    port: 5672
-    user: simcore
+  redis:
+    host: redis
+    port: 6379
 storage:
   enabled: false
   host: storage

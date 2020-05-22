@@ -17,6 +17,9 @@ tracing:
   zipkin_endpoint: ${TRACING_ZIPKIN_ENDPOINT}
 socketio:
   enabled: True
+  redis:
+    host: ${REDIS_HOST}
+    port: ${REDIS_PORT}
 director:
   host: ${DIRECTOR_HOST}
   port: ${DIRECTOR_PORT}

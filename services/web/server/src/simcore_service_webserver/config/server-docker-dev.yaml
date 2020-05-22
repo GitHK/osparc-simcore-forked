@@ -10,6 +10,9 @@ main:
   studies_access_enabled: True
 socketio:
   enabled: True
+  redis:
+    host: ${REDIS_HOST}
+    port: ${REDIS_PORT}
 tracing:
   enabled: True
   zipkin_endpoint: ${TRACING_ZIPKIN_ENDPOINT}
