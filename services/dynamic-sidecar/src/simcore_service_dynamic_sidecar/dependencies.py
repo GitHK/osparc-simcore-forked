@@ -1,12 +1,12 @@
 from fastapi import Depends, Request
-from fastapi.applications import State
+from fastapi.datastructures import State
 
 from .settings import DynamicSidecarSettings
 from .shared_store import SharedStore
 
 
 def get_app_state(request: Request) -> State:
-    return request.app.state.settings  # type: ignore
+    return request.app.state  # type: ignore
 
 
 def get_settings(app_state: State = Depends(get_app_state)) -> DynamicSidecarSettings:
