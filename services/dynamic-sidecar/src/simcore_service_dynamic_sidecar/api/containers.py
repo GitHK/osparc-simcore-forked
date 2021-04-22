@@ -129,7 +129,10 @@ async def get_container_logs(
             args["timestamps"] = True
 
         if since or until:
-            raise NotImplementedError()
+            raise HTTPException(
+                status.HTTP_501_NOT_IMPLEMENTED,
+                detail="since and until options are still not implemented",
+            )
 
         container_logs: str = await container_instance.log(**args)
         return container_logs
