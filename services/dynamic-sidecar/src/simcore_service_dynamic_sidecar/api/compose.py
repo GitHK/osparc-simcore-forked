@@ -101,7 +101,7 @@ async def runs_docker_compose_pull(
 
     try:
         # mark as pulling images
-        shared_store.is_pulling_containsers = True
+        shared_store.is_pulling_containers = True
 
         finished_without_errors, stdout = await write_file_and_run_command(
             settings=settings,
@@ -111,7 +111,7 @@ async def runs_docker_compose_pull(
         )
     finally:
         # remove mark
-        shared_store.is_pulling_containsers = False
+        shared_store.is_pulling_containers = False
 
     response.status_code = (
         HTTP_200_OK if finished_without_errors else HTTP_400_BAD_REQUEST
