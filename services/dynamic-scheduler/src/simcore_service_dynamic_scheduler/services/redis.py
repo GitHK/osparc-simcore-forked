@@ -7,9 +7,11 @@ def setup_redis(app: FastAPI) -> None:
     settings: RedisSettings = app.state.settings.DYNAMIC_SCHEDULER_REDIS
 
     async def on_startup() -> None:
-        redis_locks_dsn = settings.build_redis_dsn(RedisDatabase.LOCKS)
+        redis_distributed_identifiers = settings.build_redis_dsn(
+            RedisDatabase.DISTRIBUTED_IDENTIFIERS
+        )
         app.state.redis_client_sdk = client = RedisClientSDKHealthChecked(
-            redis_locks_dsn
+            redis_distributed_identifiers
         )
         await client.setup()
 
