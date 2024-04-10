@@ -17,6 +17,7 @@ from ..api.rpc.routes import setup_rpc_api_routes
 from ..services.director_v2 import setup_director_v2
 from ..services.rabbitmq import setup_rabbitmq
 from ..services.redis import setup_redis
+from ..services.scheduler import setup_scheduler
 from .settings import ApplicationSettings
 
 
@@ -48,6 +49,7 @@ def create_app(settings: ApplicationSettings | None = None) -> FastAPI:
     setup_rabbitmq(app)
     setup_rpc_api_routes(app)
     setup_redis(app)
+    setup_scheduler(app)
 
     setup_rest_api(app)
 
