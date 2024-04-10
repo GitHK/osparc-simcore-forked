@@ -41,14 +41,13 @@ class _RouterRegistrationMeta(type, _RegisterProtocol):
 class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
     @classmethod
     def _get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
-        # NOTE: configure how to deliver subscribers and publishers
-        # also adds the prefix of the current module
+        # NOTE: specify the delivery method used in publishers and subscribers
+        # for Redis, in this case ListSub is used
         return {"list": f"{cls.__module__}.{cls.__name__}.{handler_name}"}
 
     @classmethod
     def _register_subscribers_and_publishers(cls) -> None:
-        # This will be called automatically when a subclass is created
-
+        # called automatically when a subclass is created
         if cls.__name__ == _BASE_DEFER_EXECUTION_NAME:
             _logger.debug("Skip handlers registration for %s", cls.__name__)
             return

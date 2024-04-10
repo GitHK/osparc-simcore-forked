@@ -23,7 +23,7 @@ pytest_simcore_core_services_selection = [
 ]
 
 
-def test_preconditions():
+def test_constants_did_not_change_accidentally():
     assert _base._BASE_DEFER_EXECUTION_NAME == _base.BaseDeferredExecution.__name__
     assert (
         _base._LIST_DEFERRED_EXECUTION
