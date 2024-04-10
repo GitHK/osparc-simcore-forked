@@ -12,7 +12,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import Any, Final
+from typing import Any, Final, Protocol
 
 from faststream.redis import RedisBroker, RedisRouter
 
@@ -20,28 +20,25 @@ _logger = logging.getLogger(__name__)
 
 router = RedisRouter()
 
-# create utility to apply router with corerct preofix and more form the original function so they are unique and we can decorate
-
-# wrap below into a class and have everything available?
-# how do we dynamically register this?
 
 _BASE_DEFER_EXECUTION_NAME: Final[str] = "BaseDeferredExecution"
 _LIST_DEFERRED_EXECUTION: Final[str] = "deferred_execution"
 _LIST_RESPONSE_HANDLER: Final[str] = "result_handler"
 
 
-class DeferredExecutionMeta(type):
+class _RegisterProtocol(Protocol):
+    def _register_subscribers_and_publishers(self) -> None:
+        pass
+
+
+class _RouterRegistrationMeta(type, _RegisterProtocol):
     def __new__(cls, name, bases, dct):
-        # Create the class
         cls_instance = super().__new__(cls, name, bases, dct)
-
-        # Register the subscribers and publishers
-        cls_instance._register_subscribers_and_publishers()
-
+        cls_instance._register_subscribers_and_publishers()  # noqa: SLF001
         return cls_instance
 
 
-class BaseDeferredExecution(metaclass=DeferredExecutionMeta):  # type: ignore
+class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
     @classmethod
     def _get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
         # NOTE: configure how to deliver subscribers and publishers
@@ -76,14 +73,14 @@ class BaseDeferredExecution(metaclass=DeferredExecutionMeta):  # type: ignore
             kwargs, **cls._get_delivery_config(_LIST_DEFERRED_EXECUTION)
         )
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    async def deferred_execution(*args, **kwargs) -> Any:
-        # TODO add proper types for the result type and the request type via GENERICS
-        pass
+    async def deferred_execution(cls, *args, **kwargs) -> Any:
+        msg = f"make sure '{cls.__module__}.{cls.__name__}' implements this method"
+        raise NotImplementedError(msg)
 
-    @staticmethod
+    @classmethod
     @abstractmethod
-    async def result_handler(result: Any) -> None:
-        # TODO add proper types for the result type and the request type via GENERICS
-        pass
+    async def result_handler(cls, result: Any) -> None:
+        msg = f"make sure '{cls.__module__}.{cls.__name__}' implements this method"
+        raise NotImplementedError(msg)
