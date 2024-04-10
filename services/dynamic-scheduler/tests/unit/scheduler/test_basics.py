@@ -12,7 +12,9 @@ from faststream.redis import RedisBroker, TestRedisBroker
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.redis import RedisSettings
 from simcore_service_dynamic_scheduler.services.scheduler import _base
-from simcore_service_dynamic_scheduler.services.scheduler.sample import HelloJohn
+from simcore_service_dynamic_scheduler.services.scheduler._base import (
+    BaseDeferredExecution,
+)
 from simcore_service_dynamic_scheduler.services.scheduler.setup import get_broker
 from tenacity._asyncio import AsyncRetrying
 from tenacity.stop import stop_after_delay
@@ -30,11 +32,11 @@ def test_constants_did_not_change_accidentally():
         == _base._BASE_DEFER_EXECUTION_NAME  # noqa: SLF001
     )
     assert (
-        _base.BaseDeferredExecution.deferred_execution.__name__
+        _base.BaseDeferredExecution.run_deferred.__name__
         == _base._LIST_DEFERRED_EXECUTION  # noqa: SLF001
     )
     assert (
-        _base.BaseDeferredExecution.result_handler.__name__
+        _base.BaseDeferredExecution.deferred_result.__name__
         == _base._LIST_RESPONSE_HANDLER  # noqa: SLF001
     )
 
@@ -61,19 +63,34 @@ async def test_broker(app: FastAPI) -> AsyncIterator[RedisBroker]:
         yield test_broker
 
 
-async def test_something(test_broker: RedisBroker):
+# NOTE: classes are defined in outer scope to allow broker
+# to register routers with the correct configuration
+class SimpleDeferred(BaseDeferredExecution):
+    @classmethod
+    async def run_deferred(cls, name: str, user_id: int) -> str:
+        # this executes remotely
+        return f"Hi {name}@{user_id}!"
+
+    @classmethod
+    async def deferred_result(cls, value: str) -> None:
+        # value contains the return value of deferred_execution
+        print(f"Got: {value}")
+
+
+async def test_message_delivery_works_as_intended(test_broker: RedisBroker):
     name = "John"
     user_id = 1
 
-    assert isinstance(HelloJohn.deferred_execution, HandlerCallWrapper)
-    assert isinstance(HelloJohn.result_handler, HandlerCallWrapper)
+    assert isinstance(SimpleDeferred.run_deferred, HandlerCallWrapper)
+    assert isinstance(SimpleDeferred.deferred_result, HandlerCallWrapper)
 
-    await HelloJohn.send_emit_request(test_broker, name=name, user_id=user_id)
+    # NOTE: provided arguments must match deferred_execution signature
+    await SimpleDeferred.start_deferred(test_broker, name=name, user_id=user_id)
 
     await _assert_received(
-        HelloJohn.deferred_execution, {"name": name, "user_id": user_id}
+        SimpleDeferred.run_deferred, {"name": name, "user_id": user_id}
     )
-    await _assert_received(HelloJohn.result_handler, f"Hi {name}@{user_id}!")
+    await _assert_received(SimpleDeferred.deferred_result, f"Hi {name}@{user_id}!")
 
 
 # want a test to figure out hwo to deal with tasks
