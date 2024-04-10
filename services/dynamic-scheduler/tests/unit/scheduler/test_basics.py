@@ -11,11 +11,8 @@ from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.redis import RedisBroker, TestRedisBroker
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.redis import RedisSettings
-from simcore_service_dynamic_scheduler.services.scheduler.basics import (
-    deferred_execution,
-    result_handler,
-    send_emit_request,
-)
+from simcore_service_dynamic_scheduler.services.scheduler import _base
+from simcore_service_dynamic_scheduler.services.scheduler.sample import HelloJohn
 from simcore_service_dynamic_scheduler.services.scheduler.setup import get_broker
 from tenacity._asyncio import AsyncRetrying
 from tenacity.stop import stop_after_delay
@@ -24,6 +21,18 @@ from tenacity.wait import wait_fixed
 pytest_simcore_core_services_selection = [
     "redis",
 ]
+
+
+def test_preconditions():
+    assert _base._BASE_DEFER_EXECUTION_NAME == _base.BaseDeferredExecution.__name__
+    assert (
+        _base._LIST_DEFERRED_EXECUTION
+        == _base.BaseDeferredExecution.deferred_execution.__name__
+    )
+    assert (
+        _base._LIST_RESPONSE_HANDLER
+        == _base.BaseDeferredExecution.result_handler.__name__
+    )
 
 
 async def _assert_received(handler: HandlerCallWrapper, called_with: Any) -> None:
@@ -52,10 +61,15 @@ async def test_something(test_broker: RedisBroker):
     name = "John"
     user_id = 1
 
-    await send_emit_request(test_broker, name=name, user_id=user_id)
+    assert isinstance(HelloJohn.deferred_execution, HandlerCallWrapper)
+    assert isinstance(HelloJohn.result_handler, HandlerCallWrapper)
 
-    await _assert_received(deferred_execution, {"name": name, "user_id": user_id})
-    await _assert_received(result_handler, f"Hi {name}@{user_id}!")
+    await HelloJohn.send_emit_request(test_broker, name=name, user_id=user_id)
+
+    await _assert_received(
+        HelloJohn.deferred_execution, {"name": name, "user_id": user_id}
+    )
+    await _assert_received(HelloJohn.result_handler, f"Hi {name}@{user_id}!")
 
 
 # want a test to figure out hwo to deal with tasks

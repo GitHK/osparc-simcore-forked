@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from faststream.redis import RedisBroker
 from settings_library.redis import RedisDatabase, RedisSettings
 
-from .basics import router
+from ._base import router
 
 
 def setup_scheduler(app: FastAPI) -> None:
