@@ -24,14 +24,18 @@ pytest_simcore_core_services_selection = [
 
 
 def test_constants_did_not_change_accidentally():
-    assert _base._BASE_DEFER_EXECUTION_NAME == _base.BaseDeferredExecution.__name__
+    # pylint:disable=protected-access
     assert (
-        _base._LIST_DEFERRED_EXECUTION
-        == _base.BaseDeferredExecution.deferred_execution.__name__
+        _base.BaseDeferredExecution.__name__
+        == _base._BASE_DEFER_EXECUTION_NAME  # noqa: SLF001
     )
     assert (
-        _base._LIST_RESPONSE_HANDLER
-        == _base.BaseDeferredExecution.result_handler.__name__
+        _base.BaseDeferredExecution.deferred_execution.__name__
+        == _base._LIST_DEFERRED_EXECUTION  # noqa: SLF001
+    )
+    assert (
+        _base.BaseDeferredExecution.result_handler.__name__
+        == _base._LIST_RESPONSE_HANDLER  # noqa: SLF001
     )
 
 
