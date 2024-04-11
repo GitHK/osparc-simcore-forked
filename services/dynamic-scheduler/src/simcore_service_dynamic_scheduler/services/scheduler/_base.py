@@ -43,54 +43,67 @@ class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
     REGISTERED_HANDLERS: ClassVar[dict[str, dict[str, HandlerCallWrapper]]] = {}
 
     @classmethod
-    def _track_handler(cls, handler: HandlerCallWrapper, name: str) -> None:
-        """keeps track of handlers registered for each subclass of this class"""
-        if cls.__name__ not in cls.REGISTERED_HANDLERS:
-            cls.REGISTERED_HANDLERS[cls.__name__] = {}
-        cls.REGISTERED_HANDLERS[cls.__name__][name] = handler
+    def get_class_unique_reference(cls) -> str:
+        return f"{cls.__module__}.{cls.__name__}"
 
     @classmethod
-    def _get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
+    def __track_handler(cls, handler: HandlerCallWrapper, name: str) -> None:
+        """keeps track of handlers registered for each subclass of this class"""
+        class_path = cls.get_class_unique_reference()
+        if class_path not in cls.REGISTERED_HANDLERS:
+            cls.REGISTERED_HANDLERS[class_path] = {}
+        cls.REGISTERED_HANDLERS[class_path][name] = handler
+
+    @classmethod
+    def __get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
         # NOTE: specify the delivery method used in publishers and subscribers
         # for Redis, in this case ListSub is used
-        return {"list": f"{cls.__module__}.{cls.__name__}.{handler_name}"}
+        return {"list": f"{cls.get_class_unique_reference()}.{handler_name}"}
 
     @classmethod
     def _register_subscribers_and_publishers(cls) -> None:
-        # called automatically when a subclass is created
+        """Method is called automatically when a subclass is loaded
+
+        Automatically subscribes to the router which is going to be used
+        by the broker.
+
+        Keeps track of all created handlers by
+
+        """
+
         if cls.__name__ == _BASE_DEFER_EXECUTION_NAME:
             _logger.debug("Skip handlers registration for %s", cls.__name__)
             return
 
         _logger.debug("Registering handlers for %s", cls.__name__)
 
-        @router.subscriber(**cls._get_delivery_config(_LIST_DEFERRED_EXECUTION))
-        @router.publisher(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        @router.subscriber(**cls.__get_delivery_config(_LIST_DEFERRED_EXECUTION))
+        @router.publisher(**cls.__get_delivery_config(_LIST_RESPONSE_HANDLER))
         async def __run_deferred(*args, **kwargs) -> Any:
             return await cls.run_deferred(*args, **kwargs)
 
-        cls._track_handler(__run_deferred, "run_deferred")
+        cls.__track_handler(__run_deferred, "run_deferred")
 
-        @router.subscriber(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        @router.subscriber(**cls.__get_delivery_config(_LIST_RESPONSE_HANDLER))
         async def __deferred_result(value: Any) -> None:
             return await cls.deferred_result(value)
 
-        cls._track_handler(__deferred_result, "deferred_result")
+        cls.__track_handler(__deferred_result, "deferred_result")
 
     @classmethod
     async def start_deferred(cls, broker: RedisBroker, **kwargs) -> None:
         await broker.publish(
-            kwargs, **cls._get_delivery_config(_LIST_DEFERRED_EXECUTION)
+            kwargs, **cls.__get_delivery_config(_LIST_DEFERRED_EXECUTION)
         )
 
     @classmethod
     @abstractmethod
     async def run_deferred(cls, *args, **kwargs) -> Any:
-        msg = f"make sure '{cls.__module__}.{cls.__name__}' implements this method"
+        msg = f"make sure '{cls.get_class_unique_reference()}' implements this method"
         raise NotImplementedError(msg)
 
     @classmethod
     @abstractmethod
     async def deferred_result(cls, value: Any) -> None:
-        msg = f"make sure '{cls.__module__}.{cls.__name__}' implements this method"
+        msg = f"make sure '{cls.get_class_unique_reference()}' implements this method"
         raise NotImplementedError(msg)

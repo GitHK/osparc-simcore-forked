@@ -53,7 +53,9 @@ async def _assert_received(
     call_count: int = 1,
     timeout_s: float = 1,
 ) -> None:
-    handler = class_obj.REGISTERED_HANDLERS[class_obj.__name__][method_name]
+    handler = class_obj.REGISTERED_HANDLERS[class_obj.get_class_unique_reference()][
+        method_name
+    ]
     assert handler.mock
     async for attempt in AsyncRetrying(
         wait=wait_fixed(0.1), stop=stop_after_delay(timeout_s)
