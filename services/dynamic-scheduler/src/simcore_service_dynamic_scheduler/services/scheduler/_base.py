@@ -12,8 +12,9 @@
 
 import logging
 from abc import abstractmethod
-from typing import Any, Final, Protocol
+from typing import Any, ClassVar, Final, Protocol
 
+from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.redis import RedisBroker, RedisRouter
 
 _logger = logging.getLogger(__name__)
@@ -39,6 +40,15 @@ class _RouterRegistrationMeta(type, _RegisterProtocol):
 
 
 class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
+    REGISTERED_HANDLERS: ClassVar[dict[str, dict[str, HandlerCallWrapper]]] = {}
+
+    @classmethod
+    def _track_handler(cls, handler: HandlerCallWrapper, name: str) -> None:
+        """keeps track of handlers registered for each subclass of this class"""
+        if cls.__name__ not in cls.REGISTERED_HANDLERS:
+            cls.REGISTERED_HANDLERS[cls.__name__] = {}
+        cls.REGISTERED_HANDLERS[cls.__name__][name] = handler
+
     @classmethod
     def _get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
         # NOTE: specify the delivery method used in publishers and subscribers
@@ -54,28 +64,18 @@ class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
 
         _logger.debug("Registering handlers for %s", cls.__name__)
 
-        # @router.subscriber(**cls._get_delivery_config(_LIST_DEFERRED_EXECUTION))
-        # @router.publisher(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
-        # async def __run_deferred(*args, **kwargs) -> Any:
-        #     return await cls.run_deferred(*args, **kwargs)
+        @router.subscriber(**cls._get_delivery_config(_LIST_DEFERRED_EXECUTION))
+        @router.publisher(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        async def __run_deferred(*args, **kwargs) -> Any:
+            return await cls.run_deferred(*args, **kwargs)
 
-        # @router.subscriber(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
-        # async def __deferred_result(value: Any) -> None:
-        #     return await cls.deferred_result(value)
+        cls._track_handler(__run_deferred, "run_deferred")
 
-        # return
+        @router.subscriber(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        async def __deferred_result(value: Any) -> None:
+            return await cls.deferred_result(value)
 
-        cls.run_deferred = router.subscriber(
-            **cls._get_delivery_config(_LIST_DEFERRED_EXECUTION)
-        )(
-            router.publisher(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))(
-                cls.run_deferred
-            )
-        )
-
-        cls.deferred_result = router.subscriber(
-            **cls._get_delivery_config(_LIST_RESPONSE_HANDLER)
-        )(cls.deferred_result)
+        cls._track_handler(__deferred_result, "deferred_result")
 
     @classmethod
     async def start_deferred(cls, broker: RedisBroker, **kwargs) -> None:

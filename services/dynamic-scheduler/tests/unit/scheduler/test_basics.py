@@ -9,8 +9,8 @@ from unittest.mock import call
 
 import pytest
 from fastapi import FastAPI
-from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.redis import RedisBroker, TestRedisBroker
+from pytest_mock import MockerFixture
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from servicelib.redis import RedisClientSDK
 from servicelib.utils import logged_gather
@@ -46,12 +46,14 @@ def test_constants_did_not_change_accidentally():
 
 
 async def _assert_received(
-    handler: HandlerCallWrapper,
+    class_obj: type[BaseDeferredExecution],
+    method_name: str,
     *,
     called_with: Any,
     call_count: int = 1,
     timeout_s: float = 1,
 ) -> None:
+    handler = class_obj.REGISTERED_HANDLERS[class_obj.__name__][method_name]
     assert handler.mock
     async for attempt in AsyncRetrying(
         wait=wait_fixed(0.1), stop=stop_after_delay(timeout_s)
@@ -103,9 +105,9 @@ class SimpleDeferred(BaseDeferredExecution):
         print(f"Got: {value}")
 
 
-async def test_message_delivery_works_as_intended(test_broker: RedisBroker):
-    assert isinstance(SimpleDeferred.run_deferred, HandlerCallWrapper)
-    assert isinstance(SimpleDeferred.deferred_result, HandlerCallWrapper)
+async def test_message_delivery_works_as_intended(
+    mocker: MockerFixture, test_broker: RedisBroker
+):
 
     name = "John"
     user_id = 1
@@ -114,10 +116,10 @@ async def test_message_delivery_works_as_intended(test_broker: RedisBroker):
     await SimpleDeferred.start_deferred(test_broker, name=name, user_id=user_id)
 
     await _assert_received(
-        SimpleDeferred.run_deferred, called_with={"name": name, "user_id": user_id}
+        SimpleDeferred, "run_deferred", called_with={"name": name, "user_id": user_id}
     )
     await _assert_received(
-        SimpleDeferred.deferred_result, called_with=f"Hi {name}@{user_id}!"
+        SimpleDeferred, "deferred_result", called_with=f"Hi {name}@{user_id}!"
     )
 
 
@@ -133,8 +135,6 @@ class WaitingDeferred(BaseDeferredExecution):
 
 
 async def test_runt_lots_of_multiple_delayed_messages(test_broker: RedisBroker):
-    assert isinstance(WaitingDeferred.run_deferred, HandlerCallWrapper)
-    assert isinstance(WaitingDeferred.deferred_result, HandlerCallWrapper)
 
     count = 10
 
@@ -143,10 +143,10 @@ async def test_runt_lots_of_multiple_delayed_messages(test_broker: RedisBroker):
     )
 
     await _assert_received(
-        WaitingDeferred.run_deferred, called_with={}, call_count=count, timeout_s=10
+        WaitingDeferred, "run_deferred", called_with={}, call_count=count, timeout_s=10
     )
     await _assert_received(
-        WaitingDeferred.deferred_result, called_with=True, call_count=count
+        WaitingDeferred, "deferred_result", called_with=True, call_count=count
     )
     # Why are there too many requests inside? what is happening here?
 
