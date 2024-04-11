@@ -11,11 +11,10 @@ from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.redis import RedisBroker, TestRedisBroker
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.redis import RedisSettings
-from simcore_service_dynamic_scheduler.services.scheduler import _base
+from simcore_service_dynamic_scheduler.services.scheduler import _base, get_broker
 from simcore_service_dynamic_scheduler.services.scheduler._base import (
     BaseDeferredExecution,
 )
-from simcore_service_dynamic_scheduler.services.scheduler.setup import get_broker
 from tenacity._asyncio import AsyncRetrying
 from tenacity.stop import stop_after_delay
 from tenacity.wait import wait_fixed

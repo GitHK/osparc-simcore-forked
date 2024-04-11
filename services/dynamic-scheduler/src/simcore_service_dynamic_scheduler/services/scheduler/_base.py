@@ -54,6 +54,17 @@ class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
 
         _logger.debug("Registering handlers for %s", cls.__name__)
 
+        # @router.subscriber(**cls._get_delivery_config(_LIST_DEFERRED_EXECUTION))
+        # @router.publisher(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        # async def __run_deferred(*args, **kwargs) -> Any:
+        #     return await cls.run_deferred(*args, **kwargs)
+
+        # @router.subscriber(**cls._get_delivery_config(_LIST_RESPONSE_HANDLER))
+        # async def __deferred_result(value: Any) -> None:
+        #     return await cls.deferred_result(value)
+
+        # return
+
         cls.run_deferred = router.subscriber(
             **cls._get_delivery_config(_LIST_DEFERRED_EXECUTION)
         )(
