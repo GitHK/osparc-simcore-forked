@@ -12,7 +12,7 @@
 
 import logging
 from abc import abstractmethod
-from typing import Any, ClassVar, Final, Protocol
+from typing import Any, ClassVar, Final, Protocol, TypeAlias
 
 from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.redis import RedisBroker, RedisRouter
@@ -39,11 +39,17 @@ class _RouterRegistrationMeta(type, _RegisterProtocol):
         return cls_instance
 
 
+_HandlerName: TypeAlias = str
+ClassUniqueReference: TypeAlias = str
+
+
 class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
-    REGISTERED_HANDLERS: ClassVar[dict[str, dict[str, HandlerCallWrapper]]] = {}
+    REGISTERED_HANDLERS: ClassVar[
+        dict[ClassUniqueReference, dict[_HandlerName, HandlerCallWrapper]]
+    ] = {}
 
     @classmethod
-    def get_class_unique_reference(cls) -> str:
+    def get_class_unique_reference(cls) -> ClassUniqueReference:
         return f"{cls.__module__}.{cls.__name__}"
 
     @classmethod
@@ -55,7 +61,7 @@ class BaseDeferredExecution(metaclass=_RouterRegistrationMeta):
         cls.REGISTERED_HANDLERS[class_path][name] = handler
 
     @classmethod
-    def __get_delivery_config(cls, handler_name: str) -> dict[str, Any]:
+    def __get_delivery_config(cls, handler_name: _HandlerName) -> dict[str, Any]:
         # NOTE: specify the delivery method used in publishers and subscribers
         # for Redis, in this case ListSub is used
         return {"list": f"{cls.get_class_unique_reference()}.{handler_name}"}
