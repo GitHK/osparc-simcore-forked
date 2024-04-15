@@ -27,7 +27,14 @@ def _get_str_traceback(e: BaseException) -> str:
 
 
 class WorkerPool:
-    """A worker pool which does not dequeue incoming tasks if it's workers are busy."""
+    """
+    A worker pool with functionality to monitor worker usage.
+    Can be used in two configuration:
+    - classic worker pool: submit jobs and workers will pick them up
+        when they are free
+    - only when workers are free: call `wait_for_free_worker` and it will
+        return when a background worker is available to pick up the next job
+    """
 
     def __init__(
         self,
@@ -51,23 +58,21 @@ class WorkerPool:
     async def wait_for_free_worker(
         self, *, poll_period: NonNegativeFloat = 0.1
     ) -> None:
-        """Blocks until a worker is available.
-        Useful if you don't want to enqueue jobs while there are not workers available.
-        Allows job distribution only among available workers.
-        """
+        """Blocks until a worker is available."""
         while self._semaphore.locked():
             await asyncio.sleep(poll_period)
 
     async def submit(
         self, task_uid: TaskUID, coroutine: Coroutine, timeout: timedelta
     ) -> None:
+        """Enqueue a job to be picked up by the workers"""
         await self._submitted_awaitables.put((task_uid, coroutine, timeout))
         # context switch to allow tasks to be picked up and
         # ``wait_for_free_worker`` to block when called
         await asyncio.sleep(0)
 
-    async def cancel_task(self, task_uid: TaskUID):
-        """tries to the runtime of a given task if it is running"""
+    async def cancel_task(self, task_uid: TaskUID) -> None:
+        """cancels running task"""
         if task_uid in self._running_tasks:
             await cancel_task(self._running_tasks[task_uid], timeout=1)
 
