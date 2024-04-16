@@ -3,6 +3,7 @@ from typing import Any, TypeAlias
 from pydantic import BaseModel
 
 TaskUID: TypeAlias = str  # Unique identifier provided by th MemoryManager
+ClassUniqueReference: TypeAlias = str
 
 
 class TaskResultSuccess(BaseModel):
