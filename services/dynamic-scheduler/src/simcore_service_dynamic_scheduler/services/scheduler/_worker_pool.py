@@ -9,7 +9,7 @@ from pydantic import NonNegativeFloat, NonNegativeInt
 from servicelib.background_task import cancel_task
 from servicelib.utils import logged_gather
 
-from ._common_models import (
+from ._models import (
     TaskExecutionResult,
     TaskResultCancelledError,
     TaskResultError,
