@@ -9,7 +9,7 @@ from time import time
 import pytest
 from pydantic import NonNegativeInt
 from servicelib.utils import logged_gather
-from simcore_service_dynamic_scheduler.services.scheduler._common_models import (
+from simcore_service_dynamic_scheduler.services.scheduler._models import (
     TaskExecutionResult,
     TaskResultCancelledError,
     TaskResultError,
