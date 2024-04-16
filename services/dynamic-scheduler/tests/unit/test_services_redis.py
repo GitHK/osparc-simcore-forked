@@ -6,7 +6,10 @@ import pytest
 from fastapi import FastAPI
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.redis import RedisSettings
-from simcore_service_dynamic_scheduler.services.redis import get_redis_client
+from simcore_service_dynamic_scheduler.services.redis import (
+    REDIS_CLIENTS,
+    get_redis_client,
+)
 
 pytest_simcore_core_services_selection = [
     "redis",
@@ -23,5 +26,6 @@ def app_environment(
 
 
 async def test_health(app: FastAPI):
-    redis_client = get_redis_client(app)
-    assert await redis_client.ping() is True
+    for database in REDIS_CLIENTS:
+        redis_client = get_redis_client(app, database)
+        assert await redis_client.ping() is True
