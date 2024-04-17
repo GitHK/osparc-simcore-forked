@@ -8,6 +8,7 @@ from datetime import timedelta
 import pytest
 from fastapi import FastAPI
 from models_library.generated_models.docker_rest_api import TaskState
+from pydantic import parse_obj_as
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from servicelib.redis import RedisClientSDKHealthChecked
 from servicelib.utils import logged_gather
@@ -48,13 +49,16 @@ async def scheduling_redis_sdk(
 
 @pytest.fixture
 def task_schedule() -> TaskSchedule:
-    return TaskSchedule(
-        timeout=timedelta(seconds=1),
-        class_unique_reference="mock",
-        start_payload={},
-        state=TaskState.SCHEDULED,
-        started_at=None,
-        result=None,
+    return parse_obj_as(
+        TaskSchedule,
+        {
+            "timeout": timedelta(seconds=1),
+            "remaining_retries": 1,
+            "class_unique_reference": "mock",
+            "user_start_context": {},
+            "state": TaskState.SCHEDULED,
+            "result": None,
+        },
     )
 
 
