@@ -51,7 +51,7 @@ class TaskSchedule(BaseModel):
     )
 
     result: TaskExecutionResult | None = Field(
-        None,
+        default=None,
         description=(
             f"Populated by {TaskState.WORKER}. It always has a value after worker handles it."
             "Will be used "
