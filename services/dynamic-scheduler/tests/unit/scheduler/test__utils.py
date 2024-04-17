@@ -14,16 +14,12 @@ from faststream.rabbit import (
     RabbitRouter,
     TestRabbitBroker,
 )
-from pydantic import NonNegativeInt
+from pydantic import NonNegativeFloat
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.rabbit import RabbitSettings
 from simcore_service_dynamic_scheduler.services.scheduler._utils import (
     stop_retry_for_unintended_errors,
 )
-from tenacity import AsyncRetrying
-from tenacity.retry import retry_if_exception_type
-from tenacity.stop import stop_after_delay
-from tenacity.wait import wait_fixed
 
 pytest_simcore_core_services_selection = [
     "rabbit",
@@ -70,20 +66,12 @@ def rabbit_exchange() -> RabbitExchange:
     return RabbitExchange("test_exchange")
 
 
-async def assert_called_with(
-    handler: HandlerCallWrapper,
-    *args,
-    stop_after: NonNegativeInt = 1,
-):
-    async for attempt in AsyncRetrying(
-        wait=wait_fixed(0.01),
-        stop=stop_after_delay(stop_after),
-        reraise=True,
-        retry=retry_if_exception_type(AssertionError),
-    ):
-        with attempt:
-            assert handler.mock
-            handler.mock.assert_called_once_with(*args)
+async def _get_call_count(
+    handler: HandlerCallWrapper, *, wait_for: NonNegativeFloat = 0.1
+) -> int:
+    await asyncio.sleep(wait_for)
+    assert handler.mock
+    return len(handler.mock.call_args_list)
 
 
 async def test_handler_called_as_expected(
@@ -91,77 +79,115 @@ async def test_handler_called_as_expected(
     rabbit_exchange: RabbitExchange,
     get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
 ):
-    @rabbit_broker.subscriber(queue="print_message", exchange=rabbit_exchange)
-    async def print_message(some_value: int) -> None:
+    @rabbit_broker.subscriber(queue="print_message_no_deco", exchange=rabbit_exchange)
+    async def print_message_no_deco(some_value: int) -> None:
+        print(some_value)
+
+    @rabbit_broker.subscriber(queue="print_message_with_deco", exchange=rabbit_exchange)
+    @stop_retry_for_unintended_errors
+    async def print_message_with_deco(some_value: int) -> None:
         print(some_value)
 
     async with get_test_broker() as test_broker:
-        await test_broker.publish(23, queue="print_message", exchange=rabbit_exchange)
-        await assert_called_with(print_message, 23)
+        await test_broker.publish(
+            24, queue="print_message_no_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(print_message_no_deco) == 1
+
+        await test_broker.publish(
+            42, queue="print_message_with_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(print_message_with_deco) == 1
 
 
-async def test_handler_with_retries(
+async def test_handler_nacks_message(
     rabbit_broker: RabbitBroker,
     rabbit_exchange: RabbitExchange,
     get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
 ):
     @rabbit_broker.subscriber(
-        queue="test_nacked_message", exchange=rabbit_exchange, retry=True
+        queue="nacked_message_no_deco", exchange=rabbit_exchange, retry=True
     )
-    @stop_retry_for_unintended_errors
-    async def nacked_message(msg: str) -> None:
+    async def nacked_message_no_deco(msg: str) -> None:
         raise NackMessage
 
     @rabbit_broker.subscriber(
-        queue="test_rejected_message", exchange=rabbit_exchange, retry=True
+        queue="nacked_message_with_deco", exchange=rabbit_exchange, retry=True
     )
     @stop_retry_for_unintended_errors
-    async def rejected_message(msg: str) -> None:
+    async def nacked_message_with_deco(msg: str) -> None:
+        raise NackMessage
+
+    async with get_test_broker() as test_broker:
+        await test_broker.publish(
+            "", queue="nacked_message_no_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(nacked_message_no_deco) > 10
+
+        await test_broker.publish(
+            "", queue="nacked_message_with_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(nacked_message_with_deco) > 10
+
+
+async def test_handler_rejects_message(
+    rabbit_broker: RabbitBroker,
+    rabbit_exchange: RabbitExchange,
+    get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
+):
+    @rabbit_broker.subscriber(
+        queue="rejected_message_no_deco", exchange=rabbit_exchange, retry=True
+    )
+    @stop_retry_for_unintended_errors
+    async def rejected_message_no_deco(msg: str) -> None:
         raise RejectMessage
 
     @rabbit_broker.subscriber(
-        queue="test_message_no_error", exchange=rabbit_exchange, retry=True
+        queue="rejected_message_with_deco", exchange=rabbit_exchange, retry=True
     )
     @stop_retry_for_unintended_errors
-    async def test_message_no_error(msg: str) -> None:
-        print("ok")
+    async def rejected_message_with_deco(msg: str) -> None:
+        raise RejectMessage
+
+    async with get_test_broker() as test_broker:
+        await test_broker.publish(
+            "", queue="rejected_message_no_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(rejected_message_no_deco) == 1
+
+        await test_broker.publish(
+            "", queue="rejected_message_with_deco", exchange=rabbit_exchange
+        )
+        assert await _get_call_count(rejected_message_with_deco) == 1
+
+
+async def test_handler_unintended_error(
+    rabbit_broker: RabbitBroker,
+    rabbit_exchange: RabbitExchange,
+    get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
+):
+    @rabbit_broker.subscriber(
+        queue="unintended_error_no_deco", exchange=rabbit_exchange, retry=True
+    )
+    async def unintended_error_no_deco(msg: str) -> None:
+        msg = "this was an unexpected error"
+        raise RuntimeError(msg)
 
     @rabbit_broker.subscriber(
-        queue="test_message_raises_user_exception", exchange=rabbit_exchange, retry=True
+        queue="unintended_error_with_deco", exchange=rabbit_exchange, retry=True
     )
     @stop_retry_for_unintended_errors
-    async def test_message_raises_user_exception(msg: str) -> None:
+    async def unintended_error_with_deco(msg: str) -> None:
         msg = "this was an unexpected error"
         raise RuntimeError(msg)
 
     async with get_test_broker() as test_broker:
         await test_broker.publish(
-            "", queue="test_nacked_message", exchange=rabbit_exchange
+            "", queue="unintended_error_no_deco", exchange=rabbit_exchange
         )
-        await asyncio.sleep(0.1)
-        assert nacked_message.mock
-        assert len(nacked_message.mock.call_args_list) > 10
+        assert await _get_call_count(unintended_error_no_deco) > 10
 
         await test_broker.publish(
-            "", queue="test_rejected_message", exchange=rabbit_exchange
+            "", queue="unintended_error_with_deco", exchange=rabbit_exchange
         )
-        await asyncio.sleep(0.1)
-        assert rejected_message.mock
-        assert len(rejected_message.mock.call_args_list) == 1
-
-        await test_broker.publish(
-            "", queue="test_message_no_error", exchange=rabbit_exchange
-        )
-        await asyncio.sleep(0.1)
-        assert test_message_no_error.mock
-        assert len(test_message_no_error.mock.call_args_list) == 1
-
-        await test_broker.publish(
-            "", queue="test_message_raises_user_exception", exchange=rabbit_exchange
-        )
-        await asyncio.sleep(0.1)
-        assert test_message_raises_user_exception.mock
-        assert len(test_message_raises_user_exception.mock.call_args_list) == 1
-
-
-# TODO: split this test and add each individual without case
+        assert await _get_call_count(unintended_error_with_deco) == 1
