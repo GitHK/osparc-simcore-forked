@@ -11,6 +11,7 @@ class TaskResultSuccess(BaseModel):
 
 
 class TaskResultError(BaseModel):
+    # serializes an error form the worker: PC we need to talk on how to do this a bit better
     error: str
     str_traceback: str
 
