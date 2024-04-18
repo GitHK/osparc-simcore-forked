@@ -15,11 +15,12 @@ class TaskState(StrAutoEnum):
 
     SUBMIT_TASK = auto()
     WORKER = auto()
-    RETRY_TASK = auto()
+    ERROR_RESULT = auto()
 
     # end states
     DEFERRED_RESULT = auto()
     FINISHED_WITH_ERROR = auto()
+    CANCEL_DEFERRED = auto()
 
 
 class TaskSchedule(BaseModel):

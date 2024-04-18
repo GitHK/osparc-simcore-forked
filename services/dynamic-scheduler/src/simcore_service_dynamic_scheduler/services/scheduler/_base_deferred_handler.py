@@ -4,7 +4,7 @@ from typing import Any, ClassVar, Generic, TypeAlias, TypeVar
 
 from pydantic import NonNegativeInt
 
-from ._models import ClassUniqueReference, TaskResultError
+from ._models import ClassUniqueReference, TaskResultError, TaskUID
 
 ResultType = TypeVar("ResultType")
 UserStartContext: TypeAlias = dict[str, Any]
@@ -57,11 +57,17 @@ class BaseDeferredHandler(ABC, Generic[ResultType]):
         hast to returns: a context context object used during ``run_deferred`` and
             to process the result inside ``deferred_result``
         """
+        # NOTE: intercepted by ``DeferredManager``
 
     @classmethod
     @abstractmethod
     async def run_deferred(cls, start_context: FullStartContext) -> ResultType:
         """Code to be run in the background"""
+
+    @classmethod
+    @abstractmethod
+    async def on_deferred_created(cls, task_uid: TaskUID) -> None:
+        """Called after deferred was scheduled"""
 
     @classmethod
     @abstractmethod
@@ -78,3 +84,8 @@ class BaseDeferredHandler(ABC, Generic[ResultType]):
         NOTE: by design this doe nothing.
         Can be overwritten by the user to react to an error. In most cases this is not required.
         """
+
+    @classmethod
+    async def cancel_deferred(cls, task_uid: TaskUID) -> None:
+        """User can call this method to cancel the task"""
+        # NOTE: intercepted by ``DeferredManager``

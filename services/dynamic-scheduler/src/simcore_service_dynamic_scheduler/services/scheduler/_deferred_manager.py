@@ -1,7 +1,7 @@
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from enum import auto
-from typing import Any
+from typing import Any, Final
 
 import arrow
 from faststream.exceptions import NackMessage
@@ -32,16 +32,27 @@ from ._worker_tracker import WorkerTracker
 
 _logger = logging.getLogger(__name__)
 
+_DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS: Final[NonNegativeInt] = 100
+
+# NOTE: depending on how many copies are used to run this,
+# it will take rabbit's RoundRobin scheduler that amount of attempts to
+# find and cancel the running task.
+# If the task finished executing after the cancel_deferred was called
+# this avoids trying forever to cancel an event which no longer exists
+# also avoids blocking the handler forever
+_MAX_CANCEL_ATTEMPTS: Final[NonNegativeInt] = 100
+
 
 class _FastStreamRabbitQueue(StrAutoEnum):
     SCHEDULED = auto()
     SUBMIT_TASK = auto()
     WORKER = auto()
 
-    RETRY_TASK = auto()
+    ERROR_RESULT = auto()
 
     FINISHED_WITH_ERROR = auto()
     DEFERRED_RESULT = auto()
+    CANCEL_DEFERRED = auto()
 
 
 class _PatchStartDeferred:
@@ -63,6 +74,20 @@ class _PatchStartDeferred:
         await self.manager_schedule_deferred(self.class_unique_reference, result)
 
 
+class _PatchCancelDeferred:
+    def __init__(
+        self,
+        *,
+        class_unique_reference: ClassUniqueReference,
+        manager_cancel_deferred: Callable[[TaskUID], Awaitable[None]],
+    ) -> None:
+        self.class_unique_reference = class_unique_reference
+        self.manager_cancel_deferred = manager_cancel_deferred
+
+    async def __call__(self, task_uid: TaskUID) -> None:
+        await self.manager_cancel_deferred(task_uid)
+
+
 class DeferredManager:
     def __init__(
         self,
@@ -71,7 +96,7 @@ class DeferredManager:
         *,
         exchange_global_unique_name: str,
         globals_for_start_context: dict[str, Any],
-        max_workers: NonNegativeInt = 100,
+        max_workers: NonNegativeInt = _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS,
     ) -> None:
 
         self._memory_manager: BaseMemoryManager = RedisMemoryManager(
@@ -101,24 +126,33 @@ class DeferredManager:
             class_unique_reference: ClassUniqueReference = (
                 subclass.get_class_unique_reference()
             )
+
+            # pre checks
+            retries = subclass.get_retries()
+            if retries < 1:
+                msg = f"Must provide at least 1 retry for {class_unique_reference} for {subclass}, not {retries=}"
+                raise ValueError(msg)
+
             if class_unique_reference in self._patched_deferred_handlers:
                 _logger.debug("Already patched handler for %s", class_unique_reference)
                 continue
 
-            _logger.debug("Patching handler for %s", class_unique_reference)
+            _logger.debug("Patching `start_deferred` for %s", class_unique_reference)
             patched_start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
                 handler_to_invoke=subclass.start_deferred,
                 manager_schedule_deferred=self.__schedule_deferred,
             )
             subclass.start_deferred = patched_start_deferred  # type: ignore
-            self._patched_deferred_handlers[class_unique_reference] = subclass
 
-            # checks
-            retries = subclass.get_retries()
-            if retries < 1:
-                msg = f"Must provide at least 1 retry for {class_unique_reference} for {subclass}, not {retries=}"
-                raise ValueError(msg)
+            _logger.debug("Patching `cancel_deferred` for %s", class_unique_reference)
+            patched_cancel_deferred = _PatchCancelDeferred(
+                class_unique_reference=class_unique_reference,
+                manager_cancel_deferred=self.__cancel_deferred,
+            )
+            subclass.cancel_deferred = patched_cancel_deferred  # type: ignore
+
+            self._patched_deferred_handlers[class_unique_reference] = subclass
 
     def __get_subclass(
         self, class_unique_reference: ClassUniqueReference
@@ -151,12 +185,13 @@ class DeferredManager:
 
         await self._memory_manager.save(task_uid, task_schedule)
         _logger.debug("Scheduled task '%s' with entry: %s", task_uid, task_schedule)
-
         await self.broker.publish(
             task_uid,
             queue=_FastStreamRabbitQueue.SCHEDULED,
             exchange=self.exchange,
         )
+
+        await subclass.on_deferred_created(task_uid)
 
     async def __get_task_schedule(
         self, task_uid: TaskUID, *, expected_state: TaskState
@@ -164,7 +199,7 @@ class DeferredManager:
         task_schedule = await self._memory_manager.get(task_uid)
 
         if task_schedule is None:
-            msg = f"Could not fond a task_schedule for '{task_uid}'"
+            msg = f"Could not find a task_schedule for '{task_uid}'"
             raise RuntimeError(msg)
         if task_schedule.state != expected_state:
             msg = f"Detected unexpected state '{task_schedule.state}', should be: '{expected_state}'"
@@ -250,8 +285,10 @@ class DeferredManager:
                 task_schedule,
             ):
                 subclass = self.__get_subclass(task_schedule.class_unique_reference)
-                start_context = self.__get_start_context(task_schedule)
-                worker_result = await subclass.run_deferred(start_context)
+                full_start_context = self.__get_start_context(task_schedule)
+                worker_result = await self._worker_tracker.handle_run_deferred(
+                    subclass, task_uid, full_start_context, task_schedule.timeout
+                )
 
         _logger.debug("Handling worker result for for task_uid '%s'", task_uid)
 
@@ -294,21 +331,24 @@ class DeferredManager:
             raise TypeError(msg)
 
     @stop_retry_for_unintended_errors
-    async def _fs_handle_retry_process(  # pylint:disable=method-hidden
+    async def _fs_handle_error_result(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
         _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.RETRY_TASK, task_uid
+            "Handling state '%s' for task_uid '%s'", TaskState.ERROR_RESULT, task_uid
         )
 
         task_schedule = await self.__get_task_schedule(
-            task_uid, expected_state=TaskState.RETRY_TASK
+            task_uid, expected_state=TaskState.ERROR_RESULT
         )
         self.__raise_if_not_of_type(
             task_schedule.result, (TaskResultError, TaskResultCancelledError)
         )
 
-        if task_schedule.remaining_retries > 0:
+        if task_schedule.remaining_retries > 0 and not isinstance(
+            task_schedule.result, TaskResultCancelledError
+        ):
+            # does not retry if task was cancelled
             task_schedule.state = TaskState.SUBMIT_TASK
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
@@ -388,6 +428,38 @@ class DeferredManager:
 
         await self.__remove_task(task_uid, task_schedule)
 
+    async def __cancel_deferred(self, task_uid: TaskUID) -> None:
+        await self.broker.publish(
+            task_uid,
+            queue=_FastStreamRabbitQueue.CANCEL_DEFERRED,
+            exchange=self.exchange,
+        )
+
+    @stop_retry_for_unintended_errors
+    async def _fs_handle_cancel_deferred(  # pylint:disable=method-hidden
+        self, task_uid: TaskUID
+    ) -> None:
+        _logger.debug(
+            "Handling state '%s' for task_uid '%s'", TaskState.CANCEL_DEFERRED, task_uid
+        )
+
+        task_schedule: TaskSchedule | None = await self._memory_manager.get(task_uid)
+        if task_schedule is None:
+            # could not find it, there is no worker that can handle it, do nothing
+            _logger.debug(
+                "Could not find any data for provided task_uid '%s'. Nothing to cancel.",
+                task_uid,
+            )
+            return
+
+        was_run_deferred_cancelled = self._worker_tracker.cancel_run_deferred(task_uid)
+        if task_schedule.state == TaskState.WORKER and not was_run_deferred_cancelled:
+            _logger.debug("Currently not handling task related to '%s'", task_uid)
+            raise NackMessage
+
+        _logger.debug("Found and cancelled run_deferred for '%s'", task_uid)
+        await self.__remove_task(task_uid, task_schedule)
+
     def _register_subscribers(self) -> None:
         """
         Registers subscribers at runtime instead of import time.
@@ -408,9 +480,9 @@ class DeferredManager:
             retry=True,
         )(self._fs_handle_worker)
 
-        self._fs_handle_retry_process = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.RETRY_TASK, exchange=self.exchange
-        )(self._fs_handle_retry_process)
+        self._fs_handle_error_result = self.router.subscriber(
+            queue=_FastStreamRabbitQueue.ERROR_RESULT, exchange=self.exchange
+        )(self._fs_handle_error_result)
 
         self._fs_handle_finished_with_error = self.router.subscriber(
             queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR, exchange=self.exchange
@@ -419,6 +491,12 @@ class DeferredManager:
         self._fs_handle_deferred_result = self.router.subscriber(
             queue=_FastStreamRabbitQueue.DEFERRED_RESULT, exchange=self.exchange
         )(self._fs_handle_deferred_result)
+
+        self._fs_handle_cancel_deferred = self.router.subscriber(
+            queue=_FastStreamRabbitQueue.CANCEL_DEFERRED,
+            exchange=self.exchange,
+            retry=_MAX_CANCEL_ATTEMPTS,
+        )(self._fs_handle_cancel_deferred)
 
     async def start(self) -> None:
         self._register_subscribers()
@@ -430,8 +508,3 @@ class DeferredManager:
 
     async def stop(self) -> None:
         await self.broker.close()
-
-
-# TODO: TESTS WE ABSOLUTELEY NEED:
-# -> run the entire DeferredManager in a process and KILL the process while running a long task in the pool
-# -> a new process should pick this task up and finish it
