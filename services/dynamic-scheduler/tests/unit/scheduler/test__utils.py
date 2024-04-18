@@ -2,8 +2,10 @@
 # pylint:disable=unused-argument
 
 import asyncio
+import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from unittest.mock import Mock
 
 import pytest
 from faststream.broker.wrapper import HandlerCallWrapper
@@ -20,6 +22,10 @@ from settings_library.rabbit import RabbitSettings
 from simcore_service_dynamic_scheduler.services.scheduler._utils import (
     stop_retry_for_unintended_errors,
 )
+from tenacity._asyncio import AsyncRetrying
+from tenacity.retry import retry_if_exception_type
+from tenacity.stop import stop_after_delay
+from tenacity.wait import wait_fixed
 
 pytest_simcore_core_services_selection = [
     "rabbit",
@@ -191,3 +197,48 @@ async def test_handler_unintended_error(
             "", queue="unintended_error_with_deco", exchange=rabbit_exchange
         )
         assert await _get_call_count(unintended_error_with_deco) == 1
+
+
+async def test_handler_parallelism(
+    rabbit_broker: RabbitBroker,
+    rabbit_exchange: RabbitExchange,
+    get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
+):
+    done_mock = Mock()
+
+    @rabbit_broker.subscriber(queue="sleeper", exchange=rabbit_exchange, retry=True)
+    async def handler_sleeper(sleep_duration: float) -> None:
+        await asyncio.sleep(sleep_duration)
+        done_mock()
+
+    async def _sleep_for(test_broker: RabbitBroker, *, duration: float) -> None:
+        await test_broker.publish(duration, queue="sleeper", exchange=rabbit_exchange)
+
+    async def _wait_for_calls(mock: Mock, *, expected_calls: int) -> None:
+        async for attempt in AsyncRetrying(
+            wait=wait_fixed(0.01),
+            stop=stop_after_delay(5),
+            reraise=True,
+            retry=retry_if_exception_type(AssertionError),
+        ):
+            with attempt:
+                assert len(mock.call_args_list) == expected_calls
+
+    request_count = 100
+    sleep_duration = 0.1
+    async with get_test_broker() as test_broker:
+        start_time = time.time()
+
+        await asyncio.gather(
+            *[
+                _sleep_for(test_broker, duration=sleep_duration)
+                for _ in range(request_count)
+            ]
+        )
+
+        await _wait_for_calls(done_mock, expected_calls=request_count)
+
+        elapsed = time.time() - start_time
+
+        # ensure the run in parallel by checking that they finish in a fraction of th total duration
+        assert elapsed <= (sleep_duration * request_count) * 0.15
