@@ -15,9 +15,12 @@ class TaskResultError(BaseModel):
     error: str
     str_traceback: str
 
+    def format_error(self) -> str:
+        return f"Execution raised '{self.error}':\n{self.str_traceback}"
+
 
 class TaskResultCancelledError(BaseModel):
-    ...
+    pass
 
 
 TaskExecutionResult: TypeAlias = (
