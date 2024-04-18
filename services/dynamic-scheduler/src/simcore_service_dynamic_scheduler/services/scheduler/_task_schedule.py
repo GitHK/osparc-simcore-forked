@@ -13,7 +13,7 @@ class TaskState(StrAutoEnum):
     # entrypoint state
     SCHEDULED = auto()
 
-    SUBMIT_PROCESS = auto()
+    SUBMIT_TASK = auto()
     WORKER = auto()
     PROCESS_RESULT = auto()
     RETRY_PROCESS = auto()
