@@ -7,7 +7,6 @@ from datetime import timedelta
 
 import pytest
 from fastapi import FastAPI
-from models_library.generated_models.docker_rest_api import TaskState
 from pydantic import parse_obj_as
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from servicelib.redis import RedisClientSDKHealthChecked
