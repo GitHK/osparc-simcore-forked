@@ -30,7 +30,6 @@ async def _get_task_with_timeout(coroutine: Coroutine, *, timeout: timedelta) ->
 
 class WorkerTracker:
     def __init__(self, max_worker_count: NonNegativeInt) -> None:
-        self.max_worker_count = max_worker_count
         self._semaphore = asyncio.Semaphore(max_worker_count)
 
         self._tasks: dict[TaskUID, asyncio.Task] = {}
@@ -47,7 +46,7 @@ class WorkerTracker:
     ) -> TaskExecutionResult:
         self._tasks[task_uid] = task = asyncio.create_task(
             _get_task_with_timeout(
-                deferred_handler.run_deferred(full_start_context), timeout=timeout
+                deferred_handler.run_deferred(**full_start_context), timeout=timeout
             )
         )
 
