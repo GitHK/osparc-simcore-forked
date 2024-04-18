@@ -106,12 +106,12 @@ class DeferredManager:
                 continue
 
             _logger.debug("Patching handler for %s", class_unique_reference)
-            # TODO: fix the typing issues here
-            subclass.start_deferred = _PatchStartDeferred(
+            patched_start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
                 handler_to_invoke=subclass.start_deferred,
                 manager_schedule_deferred=self.__schedule_deferred,
             )
+            subclass.start_deferred = patched_start_deferred  # type: ignore
             self._patched_deferred_handlers[class_unique_reference] = subclass
 
             # checks
