@@ -267,9 +267,7 @@ class DeferredManager:
 
         if not self._worker_tracker.has_free_slots():
             # NOTE: puts the message back in rabbit for redelivery since this pool is currently busy
-            _logger.debug(
-                "All workers in pool are busy, requeuing job for %s", task_uid
-            )
+            _logger.info("All workers in pool are busy, requeuing job for %s", task_uid)
             raise NackMessage
 
         task_schedule = await self.__get_task_schedule(
@@ -429,6 +427,19 @@ class DeferredManager:
         await self.__remove_task(task_uid, task_schedule)
 
     async def __cancel_deferred(self, task_uid: TaskUID) -> None:
+        task_schedule: TaskSchedule | None = await self._memory_manager.get(task_uid)
+        if task_schedule is None:
+            _logger.warning("No entry four to cancel found for task_uid '%s'", task_uid)
+            return
+
+        _logger.info(
+            "Attempting to cancel task_uid '%s'. Will give up after %s attempts",
+            task_uid,
+            _MAX_CANCEL_ATTEMPTS,
+        )
+        task_schedule.state = TaskState.MANUALLY_CANCELLED
+        await self._memory_manager.save(task_uid, task_schedule)
+
         await self.broker.publish(
             task_uid,
             queue=_FastStreamRabbitQueue.CANCEL_DEFERRED,
@@ -440,24 +451,23 @@ class DeferredManager:
         self, task_uid: TaskUID
     ) -> None:
         _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.CANCEL_DEFERRED, task_uid
+            "Handling state '%s' for task_uid '%s'.",
+            TaskState.MANUALLY_CANCELLED,
+            task_uid,
+        )
+        _logger.info("Attempting to cancel task_uid '%s'", task_uid)
+
+        task_schedule = await self.__get_task_schedule(
+            task_uid, expected_state=TaskState.MANUALLY_CANCELLED
         )
 
-        task_schedule: TaskSchedule | None = await self._memory_manager.get(task_uid)
-        if task_schedule is None:
-            # could not find it, there is no worker that can handle it, do nothing
-            _logger.debug(
-                "Could not find any data for provided task_uid '%s'. Nothing to cancel.",
-                task_uid,
-            )
-            return
+        if task_schedule.state == TaskState.WORKER:
+            run_was_cancelled = self._worker_tracker.cancel_run_deferred(task_uid)
+            if not run_was_cancelled:
+                _logger.debug("Currently not handling task related to '%s'", task_uid)
+                raise NackMessage
 
-        was_run_deferred_cancelled = self._worker_tracker.cancel_run_deferred(task_uid)
-        if task_schedule.state == TaskState.WORKER and not was_run_deferred_cancelled:
-            _logger.debug("Currently not handling task related to '%s'", task_uid)
-            raise NackMessage
-
-        _logger.debug("Found and cancelled run_deferred for '%s'", task_uid)
+        _logger.info("Found and cancelled run_deferred for '%s'", task_uid)
         await self.__remove_task(task_uid, task_schedule)
 
     def _register_subscribers(self) -> None:

@@ -20,7 +20,7 @@ class TaskState(StrAutoEnum):
     # end states
     DEFERRED_RESULT = auto()
     FINISHED_WITH_ERROR = auto()
-    CANCEL_DEFERRED = auto()
+    MANUALLY_CANCELLED = auto()
 
 
 class TaskSchedule(BaseModel):
