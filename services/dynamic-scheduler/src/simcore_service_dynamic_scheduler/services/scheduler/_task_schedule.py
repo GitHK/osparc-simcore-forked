@@ -15,8 +15,7 @@ class TaskState(StrAutoEnum):
 
     SUBMIT_TASK = auto()
     WORKER = auto()
-    PROCESS_RESULT = auto()
-    RETRY_PROCESS = auto()
+    RETRY_TASK = auto()
 
     # end states
     DEFERRED_RESULT = auto()

@@ -1,8 +1,9 @@
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from enum import auto
 from typing import Any
 
+import arrow
 from faststream.exceptions import NackMessage
 from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitRouter
 from models_library.utils.enums import StrAutoEnum
@@ -37,8 +38,7 @@ class _FastStreamRabbitQueue(StrAutoEnum):
     SUBMIT_TASK = auto()
     WORKER = auto()
 
-    TASK_RESULT = auto()
-    RETRY_PROCESS = auto()
+    RETRY_TASK = auto()
 
     FINISHED_WITH_ERROR = auto()
     DEFERRED_RESULT = auto()
@@ -106,6 +106,7 @@ class DeferredManager:
                 continue
 
             _logger.debug("Patching handler for %s", class_unique_reference)
+            # TODO: fix the typing issues here
             subclass.start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
                 handler_to_invoke=subclass.start_deferred,
@@ -255,56 +256,84 @@ class DeferredManager:
         _logger.debug("Handling worker result for for task_uid '%s'", task_uid)
 
         task_schedule.result = worker_result
-        # update based on result type
+
         if isinstance(worker_result, TaskResultSuccess):
             task_schedule.state = TaskState.DEFERRED_RESULT
-        elif isinstance(worker_result, TaskResultError):
-            if task_schedule.remaining_retries > 0:
-                task_schedule.state = TaskState.RETRY_PROCESS
-            else:
-                task_schedule.state = TaskState.FINISHED_WITH_ERROR
-        elif isinstance(worker_result, TaskResultCancelledError):
-            task_schedule.state = TaskState.FINISHED_WITH_ERROR
-
-        await self._memory_manager.save(task_uid, task_schedule)
-
-        # publish to correct channel
-        queue_name: _FastStreamRabbitQueue | None = None
-        match task_schedule.state:
-            case TaskState.RETRY_PROCESS:
-                queue_name = _FastStreamRabbitQueue.RETRY_PROCESS
-            case TaskState.FINISHED_WITH_ERROR:
-                queue_name = _FastStreamRabbitQueue.FINISHED_WITH_ERROR
-            case TaskState.DEFERRED_RESULT:
-                queue_name = _FastStreamRabbitQueue.DEFERRED_RESULT
-
-        if queue_name is None:
-            msg = (
-                f"unexpected, did not find a queue for task_state={task_schedule.state}"
+            await self._memory_manager.save(task_uid, task_schedule)
+            await self.broker.publish(
+                task_uid,
+                queue=_FastStreamRabbitQueue.DEFERRED_RESULT,
+                exchange=self.exchange,
             )
-            raise RuntimeError(msg)
+            return
 
-        await self.broker.publish(task_uid, queue=queue_name, exchange=self.exchange)
+        if isinstance(worker_result, TaskResultError | TaskResultCancelledError):
+            task_schedule.state = TaskState.FINISHED_WITH_ERROR
+            await self._memory_manager.save(task_uid, task_schedule)
+            await self.broker.publish(
+                task_uid,
+                queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR,
+                exchange=self.exchange,
+            )
+            return
+
+        msg = (
+            f"Unexpected state, result type={type(worker_result)} should be an instance "
+            f"of {TaskResultSuccess.__name__}, {TaskResultError.__name__} or {TaskResultCancelledError.__name__}"
+        )
+        raise TypeError(msg)
+
+    def __raise_if_not_of_type(
+        self, task_result: Any, expected_types: Iterable[type]
+    ) -> None:
+        if not isinstance(task_result, *expected_types):
+            msg = (
+                f"Unexpected result type={type(task_result)}, should be one of"
+                f"{[x.__name__ for x in expected_types]}"
+            )
+            raise TypeError(msg)
 
     @stop_retry_for_unintended_errors
     async def _fs_handle_retry_process(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
         _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.RETRY_PROCESS, task_uid
+            "Handling state '%s' for task_uid '%s'", TaskState.RETRY_TASK, task_uid
         )
 
         task_schedule = await self.__get_task_schedule(
-            task_uid, expected_state=TaskState.RETRY_PROCESS
+            task_uid, expected_state=TaskState.RETRY_TASK
         )
-        task_schedule.state = TaskState.SUBMIT_TASK
+        self.__raise_if_not_of_type(
+            task_schedule.result, (TaskResultError, TaskResultCancelledError)
+        )
+
+        if task_schedule.remaining_retries > 0:
+            task_schedule.state = TaskState.SUBMIT_TASK
+            await self._memory_manager.save(task_uid, task_schedule)
+            await self.broker.publish(
+                task_uid,
+                queue=_FastStreamRabbitQueue.SUBMIT_TASK,
+                exchange=self.exchange,
+            )
+            return
+
+        task_schedule.state = TaskState.FINISHED_WITH_ERROR
         await self._memory_manager.save(task_uid, task_schedule)
-
         await self.broker.publish(
-            task_uid, queue=_FastStreamRabbitQueue.SUBMIT_TASK, exchange=self.exchange
+            task_uid,
+            queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR,
+            exchange=self.exchange,
         )
 
-    async def __remove_task(self, task_uid: TaskUID) -> None:
+    async def __remove_task(
+        self, task_uid: TaskUID, task_schedule: TaskSchedule
+    ) -> None:
+        _logger.info(
+            "Finished handling of '%s' in %s",
+            task_schedule.class_unique_reference,
+            arrow.utcnow().datetime - task_schedule.time_started,
+        )
         _logger.debug("Removing task %s", task_uid)
         await self._memory_manager.remove(task_uid)
 
@@ -321,14 +350,9 @@ class DeferredManager:
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.FINISHED_WITH_ERROR
         )
-        if not isinstance(
-            task_schedule.result, TaskResultError | TaskResultCancelledError
-        ):
-            msg = (
-                f"Received unexpected result '{task_schedule.result}' was expecting an "
-                f"instance of: {TaskResultError.__name__} | {TaskResultCancelledError.__name__}"
-            )
-            raise TypeError(msg)
+        self.__raise_if_not_of_type(
+            task_schedule.result, (TaskResultError, TaskResultCancelledError)
+        )
 
         if isinstance(task_schedule.result, TaskResultError):
             _logger.error(
@@ -339,8 +363,10 @@ class DeferredManager:
             subclass = self.__get_subclass(task_schedule.class_unique_reference)
             start_context = self.__get_start_context(task_schedule)
             await subclass.on_finished_with_error(task_schedule.result, start_context)
+        else:
+            _logger.debug("Task '%s' cancelled!", task_uid)
 
-        await self.__remove_task(task_uid)
+        await self.__remove_task(task_uid, task_schedule)
 
     @stop_retry_for_unintended_errors
     async def _fs_handle_deferred_result(  # pylint:disable=method-hidden
@@ -353,18 +379,14 @@ class DeferredManager:
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.DEFERRED_RESULT
         )
-        if not isinstance(task_schedule.result, TaskResultSuccess):
-            msg = (
-                f"Received unexpected result '{task_schedule.result}' was expecting an "
-                f"instance of {TaskResultSuccess.__name__}"
-            )
-            raise TypeError(msg)
+        self.__raise_if_not_of_type(task_schedule.result, (TaskResultSuccess,))
 
         subclass = self.__get_subclass(task_schedule.class_unique_reference)
         start_context = self.__get_start_context(task_schedule)
+        assert isinstance(task_schedule.result, TaskResultSuccess)  # nosec
         await subclass.on_deferred_result(task_schedule.result.value, start_context)
 
-        await self.__remove_task(task_uid)
+        await self.__remove_task(task_uid, task_schedule)
 
     def _register_subscribers(self) -> None:
         """
@@ -387,7 +409,7 @@ class DeferredManager:
         )(self._fs_handle_worker)
 
         self._fs_handle_retry_process = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.RETRY_PROCESS, exchange=self.exchange
+            queue=_FastStreamRabbitQueue.RETRY_TASK, exchange=self.exchange
         )(self._fs_handle_retry_process)
 
         self._fs_handle_finished_with_error = self.router.subscriber(
@@ -410,6 +432,6 @@ class DeferredManager:
         await self.broker.close()
 
 
-# TESTS WE ABSOLUTELEY NEED:
+# TODO: TESTS WE ABSOLUTELEY NEED:
 # -> run the entire DeferredManager in a process and KILL the process while running a long task in the pool
 # -> a new process should pick this task up and finish it
