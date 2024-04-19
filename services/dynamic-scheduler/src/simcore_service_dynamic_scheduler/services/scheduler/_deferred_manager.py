@@ -1,3 +1,4 @@
+import inspect
 import logging
 from collections.abc import Awaitable, Callable, Iterable
 from enum import auto
@@ -5,7 +6,7 @@ from typing import Any, Final
 
 import arrow
 from faststream.exceptions import NackMessage
-from faststream.rabbit import RabbitBroker, RabbitExchange, RabbitRouter
+from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitRouter
 from models_library.utils.enums import StrAutoEnum
 from pydantic import NonNegativeInt
 from servicelib.logging_utils import log_context
@@ -33,14 +34,6 @@ from ._worker_tracker import WorkerTracker
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS: Final[NonNegativeInt] = 100
-
-# NOTE: depending on how many copies are used to run this,
-# it will take rabbit's RoundRobin scheduler that amount of attempts to
-# find and cancel the running task.
-# If the task finished executing after the cancel_deferred was called
-# this avoids trying forever to cancel an event which no longer exists
-# also avoids blocking the handler forever
-_MAX_CANCEL_ATTEMPTS: Final[NonNegativeInt] = 100
 
 
 class _FastStreamRabbitQueue(StrAutoEnum):
@@ -94,7 +87,6 @@ class DeferredManager:
         rabbit_settings: RabbitSettings,
         scheduler_redis_sdk: RedisClientSDKHealthChecked,
         *,
-        exchange_global_unique_name: str,
         globals_for_start_context: dict[str, Any],
         max_workers: NonNegativeInt = _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS,
     ) -> None:
@@ -113,7 +105,20 @@ class DeferredManager:
 
         self.broker = RabbitBroker(rabbit_settings.dsn)
         self.router = RabbitRouter()
-        self.exchange = RabbitExchange(exchange_global_unique_name)
+
+        # NOTE: do not move this to a function, must remain in constructor
+        # otherwise the calling_module will be this one instead of the actual one
+        calling_module_name = inspect.getmodule(inspect.stack()[1][0]).__name__
+
+        # NOTE: RabbitMQ queues and exchanges are prefix by this
+        self._global_resources_prefix = f"{calling_module_name}"
+
+        self.common_exchange = RabbitExchange(
+            f"{self._global_resources_prefix}_common", type=ExchangeType.DIRECT
+        )
+        self.cancellation_exchange = RabbitExchange(
+            f"{self._global_resources_prefix}_cancellation", type=ExchangeType.FANOUT
+        )
 
     def register_based_deferred_handlers(self) -> None:
         """Allows subclasses of ``BaseDeferredHandler`` to be scheduled.
@@ -154,6 +159,9 @@ class DeferredManager:
 
             self._patched_deferred_handlers[class_unique_reference] = subclass
 
+    def _get_global_queue_name(self, queue_name: _FastStreamRabbitQueue) -> str:
+        return f"{self._global_resources_prefix}_{queue_name}"
+
     def __get_subclass(
         self, class_unique_reference: ClassUniqueReference
     ) -> type[BaseDeferredHandler]:
@@ -187,8 +195,8 @@ class DeferredManager:
         _logger.debug("Scheduled task '%s' with entry: %s", task_uid, task_schedule)
         await self.broker.publish(
             task_uid,
-            queue=_FastStreamRabbitQueue.SCHEDULED,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.SCHEDULED),
+            exchange=self.common_exchange,
         )
 
         await subclass.on_deferred_created(task_uid)
@@ -230,8 +238,8 @@ class DeferredManager:
 
         await self.broker.publish(
             task_uid,
-            queue=_FastStreamRabbitQueue.SUBMIT_TASK,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.SUBMIT_TASK),
+            exchange=self.common_exchange,
         )
 
     @stop_retry_for_unintended_errors
@@ -251,8 +259,8 @@ class DeferredManager:
 
         await self.broker.publish(
             task_uid,
-            queue=_FastStreamRabbitQueue.WORKER,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.WORKER),
+            exchange=self.common_exchange,
         )
 
     @stop_retry_for_unintended_errors
@@ -297,8 +305,10 @@ class DeferredManager:
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
                 task_uid,
-                queue=_FastStreamRabbitQueue.DEFERRED_RESULT,
-                exchange=self.exchange,
+                queue=self._get_global_queue_name(
+                    _FastStreamRabbitQueue.DEFERRED_RESULT
+                ),
+                exchange=self.common_exchange,
             )
             return
 
@@ -307,8 +317,10 @@ class DeferredManager:
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
                 task_uid,
-                queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR,
-                exchange=self.exchange,
+                queue=self._get_global_queue_name(
+                    _FastStreamRabbitQueue.FINISHED_WITH_ERROR
+                ),
+                exchange=self.common_exchange,
             )
             return
 
@@ -351,8 +363,8 @@ class DeferredManager:
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
                 task_uid,
-                queue=_FastStreamRabbitQueue.SUBMIT_TASK,
-                exchange=self.exchange,
+                queue=self._get_global_queue_name(_FastStreamRabbitQueue.SUBMIT_TASK),
+                exchange=self.common_exchange,
             )
             return
 
@@ -360,8 +372,10 @@ class DeferredManager:
         await self._memory_manager.save(task_uid, task_schedule)
         await self.broker.publish(
             task_uid,
-            queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(
+                _FastStreamRabbitQueue.FINISHED_WITH_ERROR
+            ),
+            exchange=self.common_exchange,
         )
 
     async def __remove_task(
@@ -432,18 +446,14 @@ class DeferredManager:
             _logger.warning("No entry four to cancel found for task_uid '%s'", task_uid)
             return
 
-        _logger.info(
-            "Attempting to cancel task_uid '%s'. Will give up after %s attempts",
-            task_uid,
-            _MAX_CANCEL_ATTEMPTS,
-        )
+        _logger.info("Attempting to cancel task_uid '%s'", task_uid)
         task_schedule.state = TaskState.MANUALLY_CANCELLED
         await self._memory_manager.save(task_uid, task_schedule)
 
         await self.broker.publish(
             task_uid,
-            queue=_FastStreamRabbitQueue.CANCEL_DEFERRED,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.CANCEL_DEFERRED),
+            exchange=self.common_exchange,
         )
 
     @stop_retry_for_unintended_errors
@@ -464,8 +474,11 @@ class DeferredManager:
         if task_schedule.state == TaskState.WORKER:
             run_was_cancelled = self._worker_tracker.cancel_run_deferred(task_uid)
             if not run_was_cancelled:
-                _logger.debug("Currently not handling task related to '%s'", task_uid)
-                raise NackMessage
+                _logger.debug(
+                    "Currently not handling task related to '%s'. Did not cancel it.",
+                    task_uid,
+                )
+                return
 
         _logger.info("Found and cancelled run_deferred for '%s'", task_uid)
         await self.__remove_task(task_uid, task_schedule)
@@ -477,35 +490,47 @@ class DeferredManager:
         """
 
         self._fs_handle_scheduled = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.SCHEDULED, exchange=self.exchange
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.SCHEDULED),
+            exchange=self.common_exchange,
+            retry=True,
         )(self._fs_handle_scheduled)
 
         self._fs_handle_submit_task = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.SUBMIT_TASK, exchange=self.exchange
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.SUBMIT_TASK),
+            exchange=self.common_exchange,
+            retry=True,
         )(self._fs_handle_submit_task)
 
         self._fs_handle_worker = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.WORKER,
-            exchange=self.exchange,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.WORKER),
+            exchange=self.common_exchange,
             retry=True,
         )(self._fs_handle_worker)
 
         self._fs_handle_error_result = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.ERROR_RESULT, exchange=self.exchange
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.ERROR_RESULT),
+            exchange=self.common_exchange,
+            retry=True,
         )(self._fs_handle_error_result)
 
         self._fs_handle_finished_with_error = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.FINISHED_WITH_ERROR, exchange=self.exchange
+            queue=self._get_global_queue_name(
+                _FastStreamRabbitQueue.FINISHED_WITH_ERROR
+            ),
+            exchange=self.common_exchange,
+            retry=True,
         )(self._fs_handle_finished_with_error)
 
         self._fs_handle_deferred_result = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.DEFERRED_RESULT, exchange=self.exchange
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.DEFERRED_RESULT),
+            exchange=self.common_exchange,
+            retry=True,
         )(self._fs_handle_deferred_result)
 
         self._fs_handle_cancel_deferred = self.router.subscriber(
-            queue=_FastStreamRabbitQueue.CANCEL_DEFERRED,
-            exchange=self.exchange,
-            retry=_MAX_CANCEL_ATTEMPTS,
+            queue=self._get_global_queue_name(_FastStreamRabbitQueue.CANCEL_DEFERRED),
+            exchange=self.cancellation_exchange,
+            retry=True,
         )(self._fs_handle_cancel_deferred)
 
     async def start(self) -> None:

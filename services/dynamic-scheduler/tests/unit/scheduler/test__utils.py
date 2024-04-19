@@ -11,6 +11,7 @@ import pytest
 from faststream.broker.wrapper import HandlerCallWrapper
 from faststream.exceptions import NackMessage, RejectMessage
 from faststream.rabbit import (
+    ExchangeType,
     RabbitBroker,
     RabbitExchange,
     RabbitRouter,
@@ -242,3 +243,32 @@ async def test_handler_parallelism(
 
         # ensure the run in parallel by checking that they finish in a fraction of th total duration
         assert elapsed <= (sleep_duration * request_count) * 0.15
+
+
+async def test_fan_out_exchange_message_delivery(
+    rabbit_broker: RabbitBroker,
+    get_test_broker: Callable[[], AbstractAsyncContextManager[RabbitBroker]],
+):
+
+    handler_1_call_count = Mock()
+    handler_2_call_count = Mock()
+
+    fan_out_exchange = RabbitExchange("test_fan_out_exchange", type=ExchangeType.FANOUT)
+
+    @rabbit_broker.subscriber(queue="handler_1", exchange=fan_out_exchange, retry=True)
+    async def handler_1(sleep_duration: float) -> None:
+        assert sleep_duration == 0.1
+        handler_1_call_count(sleep_duration)
+
+    @rabbit_broker.subscriber(queue="handler_2", exchange=fan_out_exchange, retry=True)
+    async def handler_2(sleep_duration: float) -> None:
+        assert sleep_duration == 0.1
+        handler_2_call_count(sleep_duration)
+
+    async with get_test_broker() as test_broker:
+        await test_broker.publish(0.1, exchange=fan_out_exchange)
+
+        await asyncio.sleep(1)
+
+    assert len(handler_1_call_count.call_args_list) == 1
+    assert len(handler_2_call_count.call_args_list) == 1
