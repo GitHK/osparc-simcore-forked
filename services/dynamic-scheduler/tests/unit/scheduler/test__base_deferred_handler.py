@@ -181,6 +181,13 @@ async def _assert_log_message(
             assert caplog.text.count(message) == count
 
 
+async def test_rabbit_resources_are_prefixed_with_instancing_module_name(
+    deferred_manager: DeferredManager,
+):
+    # pylint:disable=protected-access
+    assert deferred_manager._global_resources_prefix == __name__  # noqa: SLF001
+
+
 @pytest.mark.parametrize(
     "run_deferred_return", [{}, None, 1, 1.34, [], [12, 35, 7, "str", 455.66]]
 )
@@ -356,10 +363,3 @@ async def test_deferred_manager_start_parallelized(
 # TODO: TESTS WE ABSOLUTELEY NEED:
 # -> run the entire DeferredManager in a process and KILL the process while running a long task in the pool
 # -> a new process should pick this task up and finish it
-
-# TODO: test do not retry if task is cancelled
-
-# TODO: try to some tests to figure out if the handlers require retrying
-
-
-# TODO add a test for instancing DeferredManager anc chache the exchange_global_unique_name
