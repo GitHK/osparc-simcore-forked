@@ -5,7 +5,7 @@ stateDiagram-v2
     * --> Scheduled: via [start_deferred]
     ** --> ManuallyCancelled: via [cancel_deferred]
 
-    ManuallyCancelled --> Worker: attempts to cancel job in
+    ManuallyCancelled --> Worker: attempts to cancel task in
 
     Scheduled --> SubmitTask: calls [on_deferred_created]
     SubmitTask --> Worker
@@ -17,6 +17,7 @@ stateDiagram-v2
 
     DeferredResult --> °: calls [on_deferred_result]
     FinishedWithError --> °°: calls [on_finished_with_error]
+    Worker --> °°°: task cancelled
 ```
 
 ### States
