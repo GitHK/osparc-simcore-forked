@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from servicelib.redis import RedisClientSDKHealthChecked, RedisClientsManager
 from settings_library.redis import RedisDatabase, RedisSettings
 
-REDIS_CLIENTS: set[RedisDatabase] = {RedisDatabase.LOCKS, RedisDatabase.SCHEDULING}
+REDIS_CLIENTS: set[RedisDatabase] = {RedisDatabase.LOCKS, RedisDatabase.DEFERRED_TASKS}
 
 
 def setup_redis(app: FastAPI) -> None:

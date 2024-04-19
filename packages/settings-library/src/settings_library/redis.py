@@ -16,7 +16,7 @@ class RedisDatabase(int, Enum):
     USER_NOTIFICATIONS = 4
     ANNOUNCEMENTS = 5
     DISTRIBUTED_IDENTIFIERS = 6
-    SCHEDULING = 7
+    DEFERRED_TASKS = 7
 
 
 class RedisSettings(BaseCustomSettings):
@@ -32,9 +32,9 @@ class RedisSettings(BaseCustomSettings):
         return RedisDsn.build(
             scheme="redis",
             user=self.REDIS_USER or None,
-            password=self.REDIS_PASSWORD.get_secret_value()
-            if self.REDIS_PASSWORD
-            else None,
+            password=(
+                self.REDIS_PASSWORD.get_secret_value() if self.REDIS_PASSWORD else None
+            ),
             host=self.REDIS_HOST,
             port=f"{self.REDIS_PORT}",
             path=f"/{db_index}",

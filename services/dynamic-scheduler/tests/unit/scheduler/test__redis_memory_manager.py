@@ -40,7 +40,7 @@ def app_environment(
 async def scheduling_redis_sdk(
     app: FastAPI,
 ) -> AsyncIterable[RedisClientSDKHealthChecked]:
-    redis_sdk = get_redis_client(app, RedisDatabase.SCHEDULING)
+    redis_sdk = get_redis_client(app, RedisDatabase.DEFERRED_TASKS)
     await redis_sdk.redis.flushall()
     yield redis_sdk
     await redis_sdk.redis.flushall()

@@ -60,7 +60,7 @@ async def redis_sdk(
     redis_service: RedisSettings,
 ) -> AsyncIterable[RedisClientSDKHealthChecked]:
     sdk = RedisClientSDKHealthChecked(
-        redis_service.build_redis_dsn(RedisDatabase.SCHEDULING)
+        redis_service.build_redis_dsn(RedisDatabase.DEFERRED_TASKS)
     )
     await sdk.setup()
     yield sdk
