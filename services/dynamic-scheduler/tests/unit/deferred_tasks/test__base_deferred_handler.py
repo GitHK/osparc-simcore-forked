@@ -15,15 +15,15 @@ from pytest_simcore.helpers.typing_env import EnvVarsDict
 from servicelib.redis import RedisClientSDKHealthChecked
 from settings_library.rabbit import RabbitSettings
 from settings_library.redis import RedisDatabase, RedisSettings
-from simcore_service_dynamic_scheduler.services.scheduler._base_deferred_handler import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._base_deferred_handler import (
     BaseDeferredHandler,
     FullStartContext,
     UserStartContext,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._deferred_manager import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._deferred_manager import (
     DeferredManager,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._models import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._models import (
     TaskResultError,
     TaskUID,
 )

@@ -3,8 +3,8 @@ from uuid import uuid4
 
 from servicelib.redis import RedisClientSDKHealthChecked
 from servicelib.utils import logged_gather
-from simcore_service_dynamic_scheduler.services.scheduler._models import TaskUID
-from simcore_service_dynamic_scheduler.services.scheduler._task_schedule import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._models import TaskUID
+from simcore_service_dynamic_scheduler.services.deferred_tasks._task_schedule import (
     TaskSchedule,
 )
 

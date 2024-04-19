@@ -12,15 +12,15 @@ from pytest_simcore.helpers.typing_env import EnvVarsDict
 from servicelib.redis import RedisClientSDKHealthChecked
 from servicelib.utils import logged_gather
 from settings_library.redis import RedisDatabase, RedisSettings
-from simcore_service_dynamic_scheduler.services.redis import get_redis_client
-from simcore_service_dynamic_scheduler.services.scheduler._models import TaskUID
-from simcore_service_dynamic_scheduler.services.scheduler._redis_memory_manager import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._models import TaskUID
+from simcore_service_dynamic_scheduler.services.deferred_tasks._redis_memory_manager import (
     RedisMemoryManager,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._task_schedule import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._task_schedule import (
     TaskSchedule,
     TaskState,
 )
+from simcore_service_dynamic_scheduler.services.redis import get_redis_client
 
 pytest_simcore_core_services_selection = [
     "redis",

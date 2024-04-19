@@ -20,7 +20,7 @@ from faststream.rabbit import (
 from pydantic import NonNegativeFloat
 from pytest_simcore.helpers.typing_env import EnvVarsDict
 from settings_library.rabbit import RabbitSettings
-from simcore_service_dynamic_scheduler.services.scheduler._utils import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._utils import (
     stop_retry_for_unintended_errors,
 )
 from tenacity._asyncio import AsyncRetrying

@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 from faker import Faker
-from simcore_service_dynamic_scheduler.services.scheduler._base_deferred_handler import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._base_deferred_handler import (
     FullStartContext,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._deferred_manager import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._deferred_manager import (
     _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._models import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._models import (
     TaskResultCancelledError,
     TaskResultError,
     TaskResultSuccess,
     TaskUID,
 )
-from simcore_service_dynamic_scheduler.services.scheduler._worker_tracker import (
+from simcore_service_dynamic_scheduler.services.deferred_tasks._worker_tracker import (
     WorkerTracker,
 )
 
