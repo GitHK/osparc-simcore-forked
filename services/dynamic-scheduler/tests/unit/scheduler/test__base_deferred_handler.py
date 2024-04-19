@@ -79,7 +79,10 @@ async def deferred_manager(
     mocked_deferred_globals: dict[str, Any],
 ) -> AsyncIterable[DeferredManager]:
     manager = DeferredManager(
-        rabbit_service, redis_sdk, globals_for_start_context=mocked_deferred_globals
+        rabbit_service,
+        redis_sdk,
+        globals_for_start_context=mocked_deferred_globals,
+        max_workers=10,
     )
 
     await manager.setup()
@@ -309,6 +312,44 @@ async def test_deferred_manager_cancelled(
 
     await _assert_log_message(
         caplog, message=f"Found and cancelled run_deferred for '{task_uid}'", count=1
+    )
+
+
+@pytest.mark.parametrize("tasks_to_start", [100])
+async def test_deferred_manager_start_parallelized(
+    get_mocked_deferred_handler: Callable[
+        [int, timedelta, Callable[[], Awaitable[Any]]],
+        tuple[dict[MockKeys, Mock], type[BaseDeferredHandler]],
+    ],
+    mocked_deferred_globals: dict[str, Any],
+    caplog: pytest.LogCaptureFixture,
+    tasks_to_start: NonNegativeInt,
+):
+    caplog.clear()
+
+    async def _run_deferred_ok() -> None:
+        await asyncio.sleep(0.1)
+
+    mocks, mocked_deferred_handler = get_mocked_deferred_handler(
+        3, timedelta(seconds=1), _run_deferred_ok
+    )
+
+    await asyncio.gather(
+        *[mocked_deferred_handler.start_deferred() for _ in range(tasks_to_start)]
+    )
+
+    await _assert_key(
+        mocks, key=MockKeys.ON_DEFERRED_RESULT, count=tasks_to_start, timeout=10
+    )
+    for entry in mocks[MockKeys.ON_DEFERRED_RESULT].call_args_list:
+        assert entry.args == (None, mocked_deferred_globals)
+
+    await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=0)
+    await _assert_log_message(
+        caplog, message="Schedule retry attempt for task_uid ", count=0
+    )
+    await _assert_log_message(
+        caplog, message="Found and cancelled run_deferred for '", count=0
     )
 
 

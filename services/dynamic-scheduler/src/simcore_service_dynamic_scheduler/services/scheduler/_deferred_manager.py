@@ -1,6 +1,8 @@
+import asyncio
 import inspect
 import logging
 from collections.abc import Awaitable, Callable, Iterable
+from datetime import timedelta
 from enum import auto
 from typing import Any, Final
 
@@ -34,6 +36,7 @@ from ._worker_tracker import WorkerTracker
 _logger = logging.getLogger(__name__)
 
 _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS: Final[NonNegativeInt] = 100
+_DEFAULT_DELAY_BEFORE_NACK: Final[timedelta] = timedelta(seconds=1)
 
 
 class _FastStreamRabbitQueue(StrAutoEnum):
@@ -89,6 +92,7 @@ class DeferredManager:
         *,
         globals_for_start_context: dict[str, Any],
         max_workers: NonNegativeInt = _DEFAULT_DEFERRED_MANAGER_WORKER_SLOTS,
+        delay_when_requeuing_message: timedelta = _DEFAULT_DELAY_BEFORE_NACK,
     ) -> None:
 
         self._memory_manager: BaseMemoryManager = RedisMemoryManager(
@@ -96,6 +100,7 @@ class DeferredManager:
         )
 
         self._worker_tracker = WorkerTracker(max_workers)
+        self.delay_when_requeuing_message = delay_when_requeuing_message
 
         self.globals_for_start_context = globals_for_start_context
 
@@ -280,6 +285,10 @@ class DeferredManager:
         if not self._worker_tracker.has_free_slots():
             # NOTE: puts the message back in rabbit for redelivery since this pool is currently busy
             _logger.info("All workers in pool are busy, requeuing job for %s", task_uid)
+            # NOTE: due to a bug the message is resent to the same queue (same process)
+            # to avoid picking it up immediately add sme delay
+            # (for details see https://faststream.airt.ai/latest/rabbit/ack/#retries)
+            await asyncio.sleep(self.delay_when_requeuing_message.total_seconds())
             raise NackMessage
 
         task_schedule = await self.__get_task_schedule(
