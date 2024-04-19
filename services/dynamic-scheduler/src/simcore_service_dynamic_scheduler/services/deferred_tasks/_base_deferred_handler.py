@@ -31,17 +31,18 @@ class BaseDeferredHandler(ABC, Generic[ResultType]):
         return f"{cls.__module__}.{cls.__name__}"
 
     @classmethod
-    def get_retries(cls) -> NonNegativeInt:
-        """if ``run_deferred`` raises an error other than CancelledError this
-        is the maximum number of retries allowed
+    async def get_retries(cls, start_context: FullStartContext) -> NonNegativeInt:
+        """if ``run_deferred`` raises an error other than `asyncio.CancelledError`` this
+        is the maximum number of allowed retries
         """
+        _ = start_context
         return 1
 
     @classmethod
     @abstractmethod
-    async def get_timeout(cls) -> timedelta:
+    async def get_timeout(cls, start_context: FullStartContext) -> timedelta:
         """return the timeout for the execution of `run_deferred`.
-        If `run_deferred` does not finish executing in time a timeout exception will be raised
+        If ``run_deferred`` does not finish executing in time a timeout exception will be raised
         """
 
     @classmethod

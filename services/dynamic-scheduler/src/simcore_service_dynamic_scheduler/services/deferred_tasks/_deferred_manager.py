@@ -137,12 +137,6 @@ class DeferredManager:
                 subclass.get_class_unique_reference()
             )
 
-            # pre checks
-            retries = subclass.get_retries()
-            if retries < 1:
-                msg = f"Must provide at least 1 retry for {class_unique_reference} for {subclass}, not {retries=}"
-                raise ValueError(msg)
-
             _logger.debug("Patching `start_deferred` for %s", class_unique_reference)
             patched_start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
@@ -184,9 +178,11 @@ class DeferredManager:
 
         task_uid = await self._memory_manager.get_task_unique_identifier()
         subclass = self.__get_subclass(class_unique_reference)
+        full_start_context = self.__get_start_context(user_start_context)
+
         task_schedule = TaskSchedule(
-            timeout=await subclass.get_timeout(),
-            remaining_retries=subclass.get_retries(),
+            timeout=await subclass.get_timeout(full_start_context),
+            remaining_retries=await subclass.get_retries(full_start_context),
             class_unique_reference=class_unique_reference,
             user_start_context=user_start_context,
             state=TaskState.SCHEDULED,
@@ -229,11 +225,10 @@ class DeferredManager:
 
         return task_schedule
 
-    def __get_start_context(self, task_schedule: TaskSchedule) -> FullStartContext:
-        return {
-            **self.globals_for_start_context,
-            **task_schedule.user_start_context,
-        }
+    def __get_start_context(
+        self, user_start_context: UserStartContext
+    ) -> FullStartContext:
+        return {**self.globals_for_start_context, **user_start_context}
 
     def __log_state(self, task_state: TaskState, task_uid: TaskUID) -> None:
         _logger.debug("Handling state '%s' for task_uid '%s'", task_state, task_uid)
@@ -302,7 +297,9 @@ class DeferredManager:
                 f"Worker handling task_uid '{task_uid}' for {task_schedule}",
             ):
                 subclass = self.__get_subclass(task_schedule.class_unique_reference)
-                full_start_context = self.__get_start_context(task_schedule)
+                full_start_context = self.__get_start_context(
+                    task_schedule.user_start_context
+                )
                 task_schedule.result = await self._worker_tracker.handle_run_deferred(
                     subclass, task_uid, full_start_context, task_schedule.timeout
                 )
@@ -416,7 +413,7 @@ class DeferredManager:
                 task_schedule.result.format_error(),
             )
             subclass = self.__get_subclass(task_schedule.class_unique_reference)
-            start_context = self.__get_start_context(task_schedule)
+            start_context = self.__get_start_context(task_schedule.user_start_context)
             await subclass.on_finished_with_error(task_schedule.result, start_context)
         else:
             _logger.debug("Task '%s' cancelled!", task_uid)
@@ -435,7 +432,7 @@ class DeferredManager:
         self.__raise_if_not_of_type(task_schedule.result, (TaskResultSuccess,))
 
         subclass = self.__get_subclass(task_schedule.class_unique_reference)
-        start_context = self.__get_start_context(task_schedule)
+        start_context = self.__get_start_context(task_schedule.user_start_context)
         assert isinstance(task_schedule.result, TaskResultSuccess)  # nosec
         await subclass.on_deferred_result(task_schedule.result.value, start_context)
 

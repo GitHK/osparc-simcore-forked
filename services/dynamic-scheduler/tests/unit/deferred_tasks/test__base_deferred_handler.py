@@ -39,6 +39,8 @@ pytest_simcore_core_services_selection = [
 
 
 class MockKeys(StrAutoEnum):
+    GET_RETRIES = auto()
+    GET_TIMEOUT = auto()
     START_DEFERRED = auto()
     ON_DEFERRED_CREATED = auto()
     RUN_DEFERRED = auto()
@@ -106,11 +108,13 @@ async def get_mocked_deferred_handler(
 
         class ObservableDeferredHandler(BaseDeferredHandler[Any]):
             @classmethod
-            def get_retries(cls) -> int:
+            async def get_retries(cls, start_context: FullStartContext) -> int:
+                mocks[MockKeys.GET_RETRIES](retry_count, start_context)
                 return retry_count
 
             @classmethod
-            async def get_timeout(cls) -> timedelta:
+            async def get_timeout(cls, start_context: FullStartContext) -> timedelta:
+                mocks[MockKeys.GET_TIMEOUT](timeout, start_context)
                 return timeout
 
             @classmethod
@@ -123,7 +127,7 @@ async def get_mocked_deferred_handler(
                 mocks[MockKeys.ON_DEFERRED_CREATED](task_uid)
 
             @classmethod
-            async def run_deferred(cls, **start_context: FullStartContext) -> Any:
+            async def run_deferred(cls, start_context: FullStartContext) -> Any:
                 result = await run_deferred()
                 mocks[MockKeys.RUN_DEFERRED](start_context)
                 return result
@@ -202,12 +206,22 @@ async def test_deferred_manager_result_ok(
     async def _run_deferred_ok() -> Any:
         return run_deferred_return
 
+    retry_count = 1
+    timeout = timedelta(seconds=1)
     mocks, mocked_deferred_handler = get_mocked_deferred_handler(
-        1, timedelta(seconds=1), _run_deferred_ok
+        retry_count, timeout, _run_deferred_ok
     )
 
     start_kwargs = {f"start_with{i}": f"par-{i}" for i in range(6)}
     await mocked_deferred_handler.start_deferred(**start_kwargs)
+
+    start_context = {**mocked_deferred_globals, **start_kwargs}
+
+    await _assert_key(mocks, key=MockKeys.GET_RETRIES, count=1)
+    mocks[MockKeys.GET_RETRIES].assert_called_with(retry_count, start_context)
+
+    await _assert_key(mocks, key=MockKeys.GET_TIMEOUT, count=1)
+    mocks[MockKeys.GET_TIMEOUT].assert_called_with(timeout, start_context)
 
     await _assert_key(mocks, key=MockKeys.START_DEFERRED, count=1)
     mocks[MockKeys.START_DEFERRED].assert_called_with(start_kwargs)
@@ -216,13 +230,11 @@ async def test_deferred_manager_result_ok(
     assert TaskUID(mocks[MockKeys.ON_DEFERRED_CREATED].call_args_list[0].args[0])
 
     await _assert_key(mocks, key=MockKeys.RUN_DEFERRED, count=1)
-    mocks[MockKeys.RUN_DEFERRED].assert_called_once_with(
-        {**mocked_deferred_globals, **start_kwargs}
-    )
+    mocks[MockKeys.RUN_DEFERRED].assert_called_once_with(start_context)
 
     await _assert_key(mocks, key=MockKeys.ON_DEFERRED_RESULT, count=1)
     mocks[MockKeys.ON_DEFERRED_RESULT].assert_called_once_with(
-        run_deferred_return, {**mocked_deferred_globals, **start_kwargs}
+        run_deferred_return, start_context
     )
 
     await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=0)
@@ -359,6 +371,8 @@ async def test_deferred_manager_start_parallelized(
         caplog, message="Found and cancelled run_deferred for '", count=0
     )
 
+
+# TODO: add a test for timeout exception
 
 # TODO: TESTS WE ABSOLUTELEY NEED:
 # -> run the entire DeferredManager in a process and KILL the process while running a long task in the pool

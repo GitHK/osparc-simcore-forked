@@ -27,7 +27,7 @@ stateDiagram-v2
 - `ErrorResult`: checks if it can retry the gives up
 - `FinishedWIthError`: logs error, invokes `on_finished_with_error` and removes the TASK
 - `DeferredResult`: invokes `on_deferred_result` and removes the TASK
-- `ManuallyCancelled`: attempts to cancel a local task, NACK message if cannot find task. After 100 attempts it gives up. Cancellation attempts are limited to avoid concurrency issues if the worker finished before this request can be processed.
+- `ManuallyCancelled`: cancels the task and removes the TASK
 
 
 ### Workflows

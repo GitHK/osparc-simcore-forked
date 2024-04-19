@@ -46,7 +46,7 @@ class WorkerTracker:
     ) -> TaskExecutionResult:
         self._tasks[task_uid] = task = asyncio.create_task(
             _get_task_with_timeout(
-                deferred_handler.run_deferred(**full_start_context), timeout=timeout
+                deferred_handler.run_deferred(full_start_context), timeout=timeout
             )
         )
 
