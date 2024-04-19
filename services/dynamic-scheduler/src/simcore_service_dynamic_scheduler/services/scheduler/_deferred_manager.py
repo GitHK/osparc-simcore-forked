@@ -142,7 +142,7 @@ class DeferredManager:
             patched_start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
                 handler_to_invoke=subclass.start_deferred,
-                manager_schedule_deferred=self.__schedule_deferred,
+                manager_schedule_deferred=self.__start_deferred,
             )
             subclass.start_deferred = patched_start_deferred  # type: ignore
 
@@ -163,7 +163,7 @@ class DeferredManager:
     ) -> type[BaseDeferredHandler]:
         return self._patched_deferred_handlers[class_unique_reference]
 
-    async def __schedule_deferred(
+    async def __start_deferred(
         self,
         class_unique_reference: ClassUniqueReference,
         user_start_context: UserStartContext,
@@ -390,7 +390,7 @@ class DeferredManager:
 
         if isinstance(task_schedule.result, TaskResultError):
             _logger.error(
-                "Finished task_uid '%s' with error: %s",
+                "Finished task_uid '%s' with error. See below for details.\n%s",
                 task_uid,
                 task_schedule.result.format_error(),
             )
