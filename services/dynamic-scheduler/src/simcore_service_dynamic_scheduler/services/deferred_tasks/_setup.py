@@ -6,7 +6,7 @@ from ..redis import get_redis_client
 from ._deferred_manager import DeferredManager
 
 
-def setup_scheduler(app: FastAPI) -> None:
+def setup_deferred_tasks(app: FastAPI) -> None:
     rabbit_settings: RabbitSettings = app.state.settings.DYNAMIC_SCHEDULER_RABBITMQ
 
     async def on_startup() -> None:
