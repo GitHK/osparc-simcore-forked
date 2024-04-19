@@ -138,10 +138,6 @@ class DeferredManager:
                 msg = f"Must provide at least 1 retry for {class_unique_reference} for {subclass}, not {retries=}"
                 raise ValueError(msg)
 
-            if class_unique_reference in self._patched_deferred_handlers:
-                _logger.debug("Already patched handler for %s", class_unique_reference)
-                continue
-
             _logger.debug("Patching `start_deferred` for %s", class_unique_reference)
             patched_start_deferred = _PatchStartDeferred(
                 class_unique_reference=class_unique_reference,
@@ -221,13 +217,14 @@ class DeferredManager:
             **task_schedule.user_start_context,
         }
 
+    def __log_state(self, task_state: TaskState, task_uid: TaskUID) -> None:
+        _logger.debug("Handling state '%s' for task_uid '%s'", task_state, task_uid)
+
     @stop_retry_for_unintended_errors
     async def _fs_handle_scheduled(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.SCHEDULED, task_uid
-        )
+        self.__log_state(TaskState.SCHEDULED, task_uid)
 
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.SCHEDULED
@@ -246,9 +243,7 @@ class DeferredManager:
     async def _fs_handle_submit_task(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.SUBMIT_TASK, task_uid
-        )
+        self.__log_state(TaskState.SUBMIT_TASK, task_uid)
 
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.SUBMIT_TASK
@@ -267,11 +262,7 @@ class DeferredManager:
     async def _fs_handle_worker(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'",
-            TaskState.WORKER,
-            task_uid,
-        )
+        self.__log_state(TaskState.WORKER, task_uid)
 
         if not self._worker_tracker.has_free_slots():
             # NOTE: puts the message back in rabbit for redelivery since this pool is currently busy
@@ -286,21 +277,21 @@ class DeferredManager:
             with log_context(
                 _logger,
                 logging.DEBUG,
-                "Worker handling task_uid '%s' for %s",
-                task_uid,
-                task_schedule,
+                f"Worker handling task_uid '{task_uid}' for {task_schedule}",
             ):
                 subclass = self.__get_subclass(task_schedule.class_unique_reference)
                 full_start_context = self.__get_start_context(task_schedule)
-                worker_result = await self._worker_tracker.handle_run_deferred(
+                task_schedule.result = await self._worker_tracker.handle_run_deferred(
                     subclass, task_uid, full_start_context, task_schedule.timeout
                 )
 
-        _logger.debug("Handling worker result for for task_uid '%s'", task_uid)
+        _logger.debug(
+            "Worker for task_uid '%s' produced result=%s",
+            task_uid,
+            f"{task_schedule.result}",
+        )
 
-        task_schedule.result = worker_result
-
-        if isinstance(worker_result, TaskResultSuccess):
+        if isinstance(task_schedule.result, TaskResultSuccess):
             task_schedule.state = TaskState.DEFERRED_RESULT
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
@@ -312,7 +303,7 @@ class DeferredManager:
             )
             return
 
-        if isinstance(worker_result, TaskResultError | TaskResultCancelledError):
+        if isinstance(task_schedule.result, TaskResultError | TaskResultCancelledError):
             task_schedule.state = TaskState.FINISHED_WITH_ERROR
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
@@ -325,7 +316,7 @@ class DeferredManager:
             return
 
         msg = (
-            f"Unexpected state, result type={type(worker_result)} should be an instance "
+            f"Unexpected state, result type={type(task_schedule.result)} should be an instance "
             f"of {TaskResultSuccess.__name__}, {TaskResultError.__name__} or {TaskResultCancelledError.__name__}"
         )
         raise TypeError(msg)
@@ -333,20 +324,15 @@ class DeferredManager:
     def __raise_if_not_of_type(
         self, task_result: Any, expected_types: Iterable[type]
     ) -> None:
-        if not isinstance(task_result, *expected_types):
-            msg = (
-                f"Unexpected result type={type(task_result)}, should be one of"
-                f"{[x.__name__ for x in expected_types]}"
-            )
+        if not isinstance(task_result, tuple(expected_types)):
+            msg = f"Unexpected '{task_result=}', should be one of {[x.__name__ for x in expected_types]}"
             raise TypeError(msg)
 
     @stop_retry_for_unintended_errors
     async def _fs_handle_error_result(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.ERROR_RESULT, task_uid
-        )
+        self.__log_state(TaskState.ERROR_RESULT, task_uid)
 
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.ERROR_RESULT
@@ -393,11 +379,7 @@ class DeferredManager:
     async def _fs_handle_finished_with_error(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'",
-            TaskState.FINISHED_WITH_ERROR,
-            task_uid,
-        )
+        self.__log_state(TaskState.FINISHED_WITH_ERROR, task_uid)
 
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.FINISHED_WITH_ERROR
@@ -424,9 +406,7 @@ class DeferredManager:
     async def _fs_handle_deferred_result(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'", TaskState.DEFERRED_RESULT, task_uid
-        )
+        self.__log_state(TaskState.DEFERRED_RESULT, task_uid)
 
         task_schedule = await self.__get_task_schedule(
             task_uid, expected_state=TaskState.DEFERRED_RESULT
@@ -460,11 +440,7 @@ class DeferredManager:
     async def _fs_handle_cancel_deferred(  # pylint:disable=method-hidden
         self, task_uid: TaskUID
     ) -> None:
-        _logger.debug(
-            "Handling state '%s' for task_uid '%s'.",
-            TaskState.MANUALLY_CANCELLED,
-            task_uid,
-        )
+        self.__log_state(TaskState.MANUALLY_CANCELLED, task_uid)
         _logger.info("Attempting to cancel task_uid '%s'", task_uid)
 
         task_schedule = await self.__get_task_schedule(
@@ -533,7 +509,7 @@ class DeferredManager:
             retry=True,
         )(self._fs_handle_cancel_deferred)
 
-    async def start(self) -> None:
+    async def setup(self) -> None:
         self._register_subscribers()
         self.broker.include_router(self.router)
 
@@ -541,5 +517,5 @@ class DeferredManager:
 
         await self.broker.start()
 
-    async def stop(self) -> None:
+    async def shutdown(self) -> None:
         await self.broker.close()

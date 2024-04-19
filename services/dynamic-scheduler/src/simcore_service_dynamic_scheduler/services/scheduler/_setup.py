@@ -15,11 +15,11 @@ def setup_scheduler(app: FastAPI) -> None:
             get_redis_client(app, RedisDatabase.SCHEDULING),
             globals_for_start_context={"app": app},
         )
-        await deferred_manager.start()
+        await deferred_manager.setup()
 
     async def on_shutdown() -> None:
         deferred_manager: DeferredManager = app.state.deferred_manager
-        await deferred_manager.stop()
+        await deferred_manager.shutdown()
 
     app.add_event_handler("startup", on_startup)
     app.add_event_handler("shutdown", on_shutdown)
