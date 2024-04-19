@@ -304,13 +304,11 @@ class DeferredManager:
             return
 
         if isinstance(task_schedule.result, TaskResultError | TaskResultCancelledError):
-            task_schedule.state = TaskState.FINISHED_WITH_ERROR
+            task_schedule.state = TaskState.ERROR_RESULT
             await self._memory_manager.save(task_uid, task_schedule)
             await self.broker.publish(
                 task_uid,
-                queue=self._get_global_queue_name(
-                    _FastStreamRabbitQueue.FINISHED_WITH_ERROR
-                ),
+                queue=self._get_global_queue_name(_FastStreamRabbitQueue.ERROR_RESULT),
                 exchange=self.common_exchange,
             )
             return
@@ -344,6 +342,7 @@ class DeferredManager:
         if task_schedule.remaining_retries > 0 and not isinstance(
             task_schedule.result, TaskResultCancelledError
         ):
+            _logger.debug("Schedule retry attempt for task_uid '%s'", task_uid)
             # does not retry if task was cancelled
             task_schedule.state = TaskState.SUBMIT_TASK
             await self._memory_manager.save(task_uid, task_schedule)
