@@ -5,7 +5,7 @@ from enum import auto
 from typing import Any, Final
 
 import arrow
-from faststream.exceptions import NackMessage
+from faststream.exceptions import NackMessage, RejectMessage
 from faststream.rabbit import ExchangeType, RabbitBroker, RabbitExchange, RabbitRouter
 from models_library.utils.enums import StrAutoEnum
 from pydantic import NonNegativeInt
@@ -203,8 +203,21 @@ class DeferredManager:
         task_schedule = await self._memory_manager.get(task_uid)
 
         if task_schedule is None:
-            msg = f"Could not find a task_schedule for '{task_uid}'"
+            msg = f"Could not find a task_schedule for task_uid '{task_uid}'"
             raise RuntimeError(msg)
+
+        if (
+            task_schedule.state != expected_state
+            and task_schedule.state == TaskState.MANUALLY_CANCELLED
+        ):
+            _logger.debug(
+                "Detected that task_uid '%s' was cancelled. Skipping processing of %s",
+                task_uid,
+                expected_state,
+            )
+            # abandon message processing
+            raise RejectMessage
+
         if task_schedule.state != expected_state:
             msg = f"Detected unexpected state '{task_schedule.state}', should be: '{expected_state}'"
             raise RuntimeError(msg)
@@ -432,7 +445,7 @@ class DeferredManager:
         await self.broker.publish(
             task_uid,
             queue=self._get_global_queue_name(_FastStreamRabbitQueue.CANCEL_DEFERRED),
-            exchange=self.common_exchange,
+            exchange=self.cancellation_exchange,
         )
 
     @stop_retry_for_unintended_errors

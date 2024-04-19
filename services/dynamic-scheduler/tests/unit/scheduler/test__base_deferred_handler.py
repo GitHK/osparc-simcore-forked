@@ -1,6 +1,7 @@
 # pylint:disable=redefined-outer-name
 # pylint:disable=unused-argument
 
+import asyncio
 from collections.abc import AsyncIterable, Awaitable, Callable
 from datetime import timedelta
 from enum import auto
@@ -160,6 +161,23 @@ async def _assert_key(
             assert len(mocks[key].call_args_list) == count
 
 
+async def _assert_log_message(
+    caplog: pytest.LogCaptureFixture,
+    *,
+    message: str,
+    count: NonNegativeInt,
+    timeout: float = 5,
+) -> None:
+    async for attempt in AsyncRetrying(
+        wait=wait_fixed(0.01),
+        stop=stop_after_delay(timeout),
+        reraise=True,
+        retry=retry_if_exception_type(AssertionError),
+    ):
+        with attempt:
+            assert caplog.text.count(message) == count
+
+
 @pytest.mark.parametrize(
     "run_deferred_return", [{}, None, 1, 1.34, [], [12, 35, 7, "str", 455.66]]
 )
@@ -200,6 +218,7 @@ async def test_deferred_manager_result_ok(
     await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=0)
 
 
+@pytest.mark.parametrize("retry_count", [1, 5])
 async def test_deferred_manager_raised_error(
     get_mocked_deferred_handler: Callable[
         [int, timedelta, Callable[[], Awaitable[Any]]],
@@ -207,6 +226,7 @@ async def test_deferred_manager_raised_error(
     ],
     mocked_deferred_globals: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
+    retry_count: int,
 ):
     caplog.clear()
 
@@ -218,7 +238,7 @@ async def test_deferred_manager_raised_error(
         raise RuntimeError(expected_error_message)
 
     mocks, mocked_deferred_handler = get_mocked_deferred_handler(
-        1, timedelta(seconds=1), _run_deferred_raises
+        retry_count, timedelta(seconds=1), _run_deferred_raises
     )
 
     await mocked_deferred_handler.start_deferred()
@@ -230,18 +250,28 @@ async def test_deferred_manager_raised_error(
     task_uid = TaskUID(mocks[MockKeys.ON_DEFERRED_CREATED].call_args_list[0].args[0])
 
     await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=1)
-    for entry in mocks[MockKeys.ON_FINISHED_WITH_ERROR].call_args_list:
-        result, received_globals = entry.args
-        assert isinstance(result, TaskResultError)
-        assert mocked_deferred_globals == received_globals
+    result, received_globals = (
+        mocks[MockKeys.ON_FINISHED_WITH_ERROR].call_args_list[0].args
+    )
+    assert isinstance(result, TaskResultError)
+    assert mocked_deferred_globals == received_globals
+    if retry_count > 1:
+        await _assert_log_message(
+            caplog,
+            message=f"Schedule retry attempt for task_uid '{task_uid}'",
+            count=retry_count - 1,
+        )
 
     await _assert_key(mocks, key=MockKeys.RUN_DEFERRED, count=0)
     await _assert_key(mocks, key=MockKeys.ON_DEFERRED_RESULT, count=0)
 
-    assert f"Finished task_uid '{task_uid}' with error" in caplog.text
+    await _assert_log_message(
+        caplog, message=f"Finished task_uid '{task_uid}' with error", count=1
+    )
     assert expected_error_message in caplog.text
 
 
+@pytest.mark.parametrize("retry_count", [1, 5])
 async def test_deferred_manager_cancelled(
     get_mocked_deferred_handler: Callable[
         [int, timedelta, Callable[[], Awaitable[Any]]],
@@ -249,8 +279,37 @@ async def test_deferred_manager_cancelled(
     ],
     mocked_deferred_globals: dict[str, Any],
     caplog: pytest.LogCaptureFixture,
+    retry_count: int,
 ):
     caplog.clear()
+
+    async def _run_deferred_to_cancel() -> None:
+        await asyncio.sleep(1e6)
+
+    mocks, mocked_deferred_handler = get_mocked_deferred_handler(
+        retry_count, timedelta(seconds=10), _run_deferred_to_cancel
+    )
+
+    await mocked_deferred_handler.start_deferred()
+
+    await _assert_key(mocks, key=MockKeys.START_DEFERRED, count=1)
+    mocks[MockKeys.START_DEFERRED].assert_called_once_with({})
+
+    await _assert_key(mocks, key=MockKeys.ON_DEFERRED_CREATED, count=1)
+    task_uid = TaskUID(mocks[MockKeys.ON_DEFERRED_CREATED].call_args_list[0].args[0])
+
+    await mocked_deferred_handler.cancel_deferred(task_uid)
+
+    await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=0)
+
+    assert caplog.text.count(f"Schedule retry attempt for task_uid '{task_uid}'") == 0
+
+    await _assert_key(mocks, key=MockKeys.RUN_DEFERRED, count=0)
+    await _assert_key(mocks, key=MockKeys.ON_DEFERRED_RESULT, count=0)
+
+    await _assert_log_message(
+        caplog, message=f"Found and cancelled run_deferred for '{task_uid}'", count=1
+    )
 
 
 # TODO: TESTS WE ABSOLUTELEY NEED:
