@@ -108,7 +108,7 @@ class DeferredManager:
 
         # NOTE: do not move this to a function, must remain in constructor
         # otherwise the calling_module will be this one instead of the actual one
-        calling_module_name = inspect.getmodule(inspect.stack()[1][0]).__name__
+        calling_module_name = inspect.getmodule(inspect.stack()[1][0]).__name__  # type: ignore
 
         # NOTE: RabbitMQ queues and exchanges are prefix by this
         self._global_resources_prefix = f"{calling_module_name}"
