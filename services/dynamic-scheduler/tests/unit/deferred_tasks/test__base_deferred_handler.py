@@ -372,7 +372,35 @@ async def test_deferred_manager_start_parallelized(
     )
 
 
-# TODO: add a test for timeout exception
+async def test_deferred_manager_code_times_out(
+    get_mocked_deferred_handler: Callable[
+        [int, timedelta, Callable[[], Awaitable[Any]]],
+        tuple[dict[MockKeys, Mock], type[BaseDeferredHandler]],
+    ],
+    mocked_deferred_globals: dict[str, Any],
+):
+    async def _run_deferred_to_cancel() -> None:
+        await asyncio.sleep(1e6)
+
+    mocks, mocked_deferred_handler = get_mocked_deferred_handler(
+        1, timedelta(seconds=0.5), _run_deferred_to_cancel
+    )
+
+    await mocked_deferred_handler.start_deferred()
+
+    await _assert_key(mocks, key=MockKeys.START_DEFERRED, count=1)
+    mocks[MockKeys.START_DEFERRED].assert_called_once_with({})
+
+    await _assert_key(mocks, key=MockKeys.ON_DEFERRED_CREATED, count=1)
+    assert TaskUID(mocks[MockKeys.ON_DEFERRED_CREATED].call_args_list[0].args[0])
+
+    await _assert_key(mocks, key=MockKeys.ON_FINISHED_WITH_ERROR, count=1)
+    for entry in mocks[MockKeys.ON_FINISHED_WITH_ERROR].call_args_list:
+        assert "asyncio.exceptions.TimeoutError" in entry.args[0].error
+
+    await _assert_key(mocks, key=MockKeys.RUN_DEFERRED, count=0)
+    await _assert_key(mocks, key=MockKeys.ON_DEFERRED_RESULT, count=0)
+
 
 # TODO: TESTS WE ABSOLUTELEY NEED:
 # -> run the entire DeferredManager in a process and KILL the process while running a long task in the pool
