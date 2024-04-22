@@ -379,11 +379,11 @@ async def test_deferred_manager_code_times_out(
     ],
     mocked_deferred_globals: dict[str, Any],
 ):
-    async def _run_deferred_to_cancel() -> None:
+    async def _run_deferred_that_times_out() -> None:
         await asyncio.sleep(1e6)
 
     mocks, mocked_deferred_handler = get_mocked_deferred_handler(
-        1, timedelta(seconds=0.5), _run_deferred_to_cancel
+        1, timedelta(seconds=0.5), _run_deferred_that_times_out
     )
 
     await mocked_deferred_handler.start_deferred()
