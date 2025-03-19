@@ -6,12 +6,12 @@ from models_library.progress_bar import ProgressReport
 from models_library.projects_nodes_io import StorageFileID
 from servicelib.logging_utils import log_context
 
-from .utils import get_celery_worker
+from ...modules.celery.utils import get_celery_worker
 
 _logger = logging.getLogger(__name__)
 
 
-def export_data(task: Task, files: list[StorageFileID]):
+def data_export(task: Task, files: list[StorageFileID]):
     _logger.info("Exporting files: %s", files)
     for n, file in enumerate(files, start=1):
         with log_context(
