@@ -24,6 +24,8 @@ _DEFAULT_STEP_RETRIES: Final[NonNegativeInt] = 0
 _DEFAULT_STEP_TIMEOUT: Final[timedelta] = timedelta(seconds=5)
 _DEFAULT_WAIT_FOR_MANUAL_INTERVENTION: Final[bool] = False
 
+_DEFAULT_OPERATION_REPEAT: Final[bool] = False
+
 
 class BaseStep(ABC):
     @classmethod
@@ -144,12 +146,6 @@ StepsSubGroup: TypeAlias = Annotated[tuple[type[BaseStep], ...], Field(min_lengt
 
 
 class BaseStepGroup(ABC):
-    def __init__(self, *, repeat_steps: bool, wait_before_repeat: timedelta) -> None:
-        """
-        if repeat_steps is True, the steps in this group will be repeated forever
-        """
-        self.repeat_steps = repeat_steps
-        self.wait_before_repeat = wait_before_repeat
 
     @abstractmethod
     def __len__(self) -> int:
@@ -168,22 +164,10 @@ class BaseStepGroup(ABC):
         """returns subgroups of steps to run"""
 
 
-_DEFAULT_REPEAT_STEPS: Final[bool] = False
-_DEFAULT_WAIT_BEFORE_REPEAT: Final[timedelta] = timedelta(seconds=5)
-
-
 class SingleStepGroup(BaseStepGroup):
-    def __init__(
-        self,
-        step: type[BaseStep],
-        *,
-        repeat_steps: bool = _DEFAULT_REPEAT_STEPS,
-        wait_before_repeat: timedelta = _DEFAULT_WAIT_BEFORE_REPEAT,
-    ) -> None:
+    def __init__(self, step: type[BaseStep]) -> None:
         self._step: type[BaseStep] = step
-        super().__init__(
-            repeat_steps=repeat_steps, wait_before_repeat=wait_before_repeat
-        )
+        super().__init__()
 
     def __len__(self) -> int:
         return 1
@@ -192,7 +176,7 @@ class SingleStepGroup(BaseStepGroup):
         return f"{self.__class__.__name__}({self._step.get_step_name()})"
 
     def get_step_group_name(self, *, index: NonNegativeInt) -> StepGroupName:
-        return f"{index}S{'R' if self.repeat_steps else ''}"
+        return f"{index}S"
 
     def get_step_subgroup_to_run(self) -> StepsSubGroup:
         return TypeAdapter(StepsSubGroup).validate_python((self._step,))
@@ -202,16 +186,9 @@ _MIN_PARALLEL_STEPS: Final[int] = 2
 
 
 class ParallelStepGroup(BaseStepGroup):
-    def __init__(
-        self,
-        *steps: type[BaseStep],
-        repeat_steps: bool = _DEFAULT_REPEAT_STEPS,
-        wait_before_repeat: timedelta = _DEFAULT_WAIT_BEFORE_REPEAT,
-    ) -> None:
+    def __init__(self, *steps: type[BaseStep]) -> None:
         self._steps: list[type[BaseStep]] = list(steps)
-        super().__init__(
-            repeat_steps=repeat_steps, wait_before_repeat=wait_before_repeat
-        )
+        super().__init__()
 
     def __len__(self) -> int:
         return len(self._steps)
@@ -224,7 +201,7 @@ class ParallelStepGroup(BaseStepGroup):
         return self._steps
 
     def get_step_group_name(self, *, index: NonNegativeInt) -> StepGroupName:
-        return f"{index}P{'R' if self.repeat_steps else ''}"
+        return f"{index}P"
 
     def get_step_subgroup_to_run(self) -> StepsSubGroup:
         return TypeAdapter(StepsSubGroup).validate_python(tuple(self._steps))
@@ -236,7 +213,15 @@ class Operation:
         *step_groups: BaseStepGroup,
         initial_context_required_keys: set[str] | None = None,
         is_cancellable: bool = True,
+        repeat: bool = _DEFAULT_OPERATION_REPEAT,
     ) -> None:
+        """
+        NOTE: when `repeat` is True, all step groups in will be repeated forever,
+        unless the operation defines a waiting in one of the steps, everyting
+        will be repeated immediately!
+        """
+        self.repeat = repeat
+
         self.step_groups = list(step_groups)
         self.initial_context_required_keys = (
             set()
@@ -265,7 +250,7 @@ def _validate_operation(  # noqa: C901, PLR0912 # pylint: disable=too-many-branc
     execute_provided_keys: set[str] = set()
     revert_provided_keys: set[str] = set()
 
-    for k, step_group in enumerate(operation.step_groups):
+    for step_group in operation.step_groups:
         if (
             isinstance(step_group, ParallelStepGroup)
             and len(step_group.steps) < _MIN_PARALLEL_STEPS
@@ -274,10 +259,6 @@ def _validate_operation(  # noqa: C901, PLR0912 # pylint: disable=too-many-branc
                 f"{ParallelStepGroup.__name__} needs at least {_MIN_PARALLEL_STEPS} "
                 f"steps. TIP: use {SingleStepGroup.__name__} instead."
             )
-            raise ValueError(msg)
-
-        if k < len(operation.step_groups) - 1 and step_group.repeat_steps is True:
-            msg = f"Only the last step group can have repeat_steps=True. Error at index {k=}"
             raise ValueError(msg)
 
         for step in step_group.get_step_subgroup_to_run():
@@ -323,16 +304,12 @@ def _validate_operation(  # noqa: C901, PLR0912 # pylint: disable=too-many-branc
                     raise ValueError(msg)
                 revert_provided_keys.add(key)
 
-        if (
-            step_group.repeat_steps is True
-            and k == len(operation.step_groups) - 1
-            and any(
-                step.wait_for_manual_intervention()
-                for step in step_group.get_step_subgroup_to_run()
-            )
+        if operation.repeat is True and any(
+            step.wait_for_manual_intervention()
+            for step in step_group.get_step_subgroup_to_run()
         ):
             msg = (
-                "Step groups with repeat_steps=True cannot have steps that require "
+                "Operation with repeat=True cannot have steps that require "
                 "manual intervention. This would lead to a deadlock."
             )
             raise ValueError(msg)

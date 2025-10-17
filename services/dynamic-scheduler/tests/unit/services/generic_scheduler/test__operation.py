@@ -116,17 +116,21 @@ class AllowedKeysBS(BaseBS):
         ),
         Operation(
             SingleStepGroup(BS2),
-            ParallelStepGroup(BS1, BS3, repeat_steps=True),
+            ParallelStepGroup(BS1, BS3),
+            repeat=True,
         ),
         Operation(
             ParallelStepGroup(BS1, BS3),
-            SingleStepGroup(BS2, repeat_steps=True),
+            SingleStepGroup(BS2),
+            repeat=True,
         ),
         Operation(
-            SingleStepGroup(BS1, repeat_steps=True),
+            SingleStepGroup(BS1),
+            repeat=True,
         ),
         Operation(
-            ParallelStepGroup(BS1, BS3, repeat_steps=True),
+            ParallelStepGroup(BS1, BS3),
+            repeat=True,
         ),
         Operation(
             SingleStepGroup(AllowedKeysBS),
@@ -141,13 +145,6 @@ def test_validate_operation_passes(operation: Operation):
     "operation, match",
     [
         (Operation(), "Operation should have at least 1 item"),
-        (
-            Operation(
-                SingleStepGroup(BS1, repeat_steps=True),
-                SingleStepGroup(BS2),
-            ),
-            "Only the last step group can have repeat_steps=True",
-        ),
         (
             Operation(
                 SingleStepGroup(BS1),
@@ -184,13 +181,11 @@ def test_validate_operation_passes(operation: Operation):
             f"already provided key='revert_key' in {BaseStep.get_revert_provides_context_keys.__name__}",
         ),
         (
-            Operation(SingleStepGroup(MI1, repeat_steps=True)),
+            Operation(SingleStepGroup(MI1), repeat=True),
             "cannot have steps that require manual intervention",
         ),
         (
-            Operation(
-                ParallelStepGroup(MI1, BS1, BS2, repeat_steps=True),
-            ),
+            Operation(ParallelStepGroup(MI1, BS1, BS2), repeat=True),
             "cannot have steps that require manual intervention",
         ),
         (
